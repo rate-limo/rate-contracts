@@ -1,0 +1,53 @@
+# Reconstructed 2026-08-06. The original was never committed (gitignored since before the
+# first commit), so these settings were derived from the live RISE deployment rather than
+# recovered:
+#
+#   * solc 0.8.24 -- read out of the deployed MatchingEngine's CBOR metadata tail
+#     (`64736f6c6343 000818 0033` => solc 0.8.24) at
+#     0xF78d4FC0999A627c47cD783159f810B0B9c11401 on RISE Testnet.
+#   * bytecode_hash/cbor_metadata -- the same tail starts `a2 6469706673 5822 1220...`,
+#     a 2-entry CBOR map carrying an IPFS hash, which is foundry's default.
+#
+# The optimizer settings are pinned by matching `forge inspect MatchingEngine
+# deployedBytecode` against that on-chain code. MatchingEngine is 24,347 bytes -- 229 under
+# the EIP-170 limit of 24,576 -- so these are not free parameters: a wrong `runs` pushes it
+# over and the deploy fails partway through, leaving a half-wired chain.
+#
+# Verified 2026-08-06 against the live contract: of 24,347 bytes exactly 52 differ, in two
+# runs, both expected --
+#   * 20 bytes @15575: the MatchingLib link placeholder (`__$7b0ead...$__`) where the live
+#     code carries the deployed library address 0xb097e901999A80b46780De951e6bd3bDd5979f88.
+#   * 32 bytes @24304: the metadata IPFS hash.
+# The other 24,295 bytes are byte-identical, which is what pins solc/optimizer/runs.
+#
+# MatchingLib IS an externally linked library (see linkReferences in
+# out/MatchingEngine.sol/MatchingEngine.json), not an inlined internal one. No `libraries`
+# entry is set here on purpose: forge deploys and links it automatically during
+# `forge script`, and hardcoding an address would bind new deployments to an old library.
+
+[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+test = "test"
+script = "script"
+
+solc = "0.8.24"
+optimizer = true
+optimizer_runs = 200
+
+# openzeppelin-foundry-upgrades (script/exchange/RiseTestnet.s.sol) needs all three to run
+# its storage-layout safety checks. Harmless for the scripts that do not use it.
+ffi = true
+ast = true
+build_info = true
+extra_output = ["storageLayout"]
+
+fs_permissions = [{ access = "read", path = "./out" }]
+
+[profile.ci]
+# Referenced by .github/workflows/test.yml (FOUNDRY_PROFILE: ci).
+verbosity = 3
+
+[rpc_endpoints]
+rise_testnet = "https://testnet.riselabs.xyz/"

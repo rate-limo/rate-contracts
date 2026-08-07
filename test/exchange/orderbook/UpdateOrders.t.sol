@@ -1,0 +1,228 @@
+pragma solidity >=0.8;
+
+import {MockToken} from "../../../src/mock/MockToken.sol";
+import {MockBase} from "../../../src/mock/MockBase.sol";
+import {MockQuote} from "../../../src/mock/MockQuote.sol";
+import {MockBTC} from "../../../src/mock/MockBTC.sol";
+import {ErrToken} from "../../../src/mock/MockTokenOver18Decimals.sol";
+import {Utils} from "../../utils/Utils.sol";
+import {MatchingEngine} from "../../../src/exchange/MatchingEngine.sol";
+import {OrderbookFactory} from "../../../src/exchange/orderbooks/OrderbookFactory.sol";
+import {Orderbook} from "../../../src/exchange/orderbooks/Orderbook.sol";
+import {IOrderbook} from "../../../src/exchange/interfaces/IOrderbook.sol";
+import {ExchangeOrderbook} from "../../../src/exchange/libraries/ExchangeOrderbook.sol";
+import {IOrderbookFactory} from "../../../src/exchange/interfaces/IOrderbookFactory.sol";
+import {WETH9} from "../../../src/mock/WETH9.sol";
+import {BaseSetup} from "../OrderbookBaseSetup.sol";
+import {console} from "forge-std/console.sol";
+import {stdStorage, StdStorage, Test} from "forge-std/Test.sol";
+
+interface IMatchingEngine {
+    struct UpdateOrder {
+        address base;
+        address quote;
+        bool isBid;
+        uint32 orderId;
+        uint256 price;
+        uint256 amount;
+        uint32 n;
+        address recipient;
+    }
+}
+
+contract LimitOrderTest is BaseSetup {
+    // rematch order so that amount is changed from the exact order
+    function testRematchOrderAmountIncrease() public {
+        super.setUp();
+        matchingEngine.addPair(address(token1), address(btc), 1e8, 0, address(token1), ExchangeOrderbook.MatchingMode.PriceTimePriority);
+        console.log("Base/Quote Pair: ", matchingEngine.getPair(address(token1), address(btc)));
+        vm.prank(trader1);
+        MatchingEngine.OrderResult memory ord0Result =
+            matchingEngine.limitBuy(address(token1), address(btc), 1e8, 1e8, true, 2, trader1);
+        // rematch trade
+        vm.prank(trader1);
+        MatchingEngine.CreateOrderInput[] memory updateOrderData = new MatchingEngine.CreateOrderInput[](1);
+        updateOrderData[0].base = address(token1);
+        updateOrderData[0].quote = address(btc);
+        updateOrderData[0].isBid = true;
+        updateOrderData[0].isLimit = true;
+        updateOrderData[0].orderId = ord0Result.id;
+        updateOrderData[0].price = 1e8;
+        updateOrderData[0].amount = 1e10;
+        updateOrderData[0].n = 2;
+        updateOrderData[0].recipient = trader1;
+        matchingEngine.updateOrders(updateOrderData);
+    }
+
+    function testRematchOrderAmountDecrease() public {
+        super.setUp();
+        matchingEngine.addPair(address(token1), address(btc), 1e8, 0, address(token1), ExchangeOrderbook.MatchingMode.PriceTimePriority);
+        console.log("Base/Quote Pair: ", matchingEngine.getPair(address(token1), address(btc)));
+        vm.prank(trader1);
+        MatchingEngine.OrderResult memory ord0Result =
+            matchingEngine.limitBuy(address(token1), address(btc), 1e8, 1e8, true, 2, trader1);
+        // rematch trade
+        vm.prank(trader1);
+        MatchingEngine.CreateOrderInput[] memory updateOrderData = new MatchingEngine.CreateOrderInput[](1);
+        updateOrderData[0].base = address(token1);
+        updateOrderData[0].quote = address(btc);
+        updateOrderData[0].isBid = true;
+        updateOrderData[0].orderId = ord0Result.id;
+        updateOrderData[0].price = 1e8;
+        updateOrderData[0].amount = 1e5;
+        updateOrderData[0].n = 5;
+        updateOrderData[0].recipient = trader1;
+        matchingEngine.updateOrders(updateOrderData);
+    }
+
+    // rematch order so that price is changed from the exact order
+    function testRematchOrderPrice() public {
+        super.setUp();
+        matchingEngine.addPair(address(token1), address(btc), 1e8, 0, address(token1), ExchangeOrderbook.MatchingMode.PriceTimePriority);
+        console.log("Base/Quote Pair: ", matchingEngine.getPair(address(token1), address(btc)));
+        vm.prank(trader1);
+        MatchingEngine.OrderResult memory ord0Result =
+            matchingEngine.limitBuy(address(token1), address(btc), 1e8, 1e8, true, 2, trader1);
+        // rematch trade
+        vm.prank(trader1);
+        MatchingEngine.CreateOrderInput[] memory updateOrderData = new MatchingEngine.CreateOrderInput[](1);
+        updateOrderData[0].base = address(token1);
+        updateOrderData[0].quote = address(btc);
+        updateOrderData[0].isBid = true;
+        updateOrderData[0].isLimit = true;
+        updateOrderData[0].orderId = ord0Result.id;
+        updateOrderData[0].price = 1e5;
+        updateOrderData[0].amount = 1e10;
+        updateOrderData[0].n = 5;
+        updateOrderData[0].recipient = trader1;
+        matchingEngine.updateOrders(updateOrderData);
+    }
+
+    function testUpdateOrdersETH() public {
+        super.setUp();
+        matchingEngine.addPair(address(token1), address(weth), 1e8, 0, address(token1), ExchangeOrderbook.MatchingMode.PriceTimePriority);
+        console.log("Base/Quote Pair: ", matchingEngine.getPair(address(token1), address(weth)));
+        vm.prank(trader1);
+        MatchingEngine.OrderResult memory ord0Result =
+            matchingEngine.limitBuyETH{value: 1e18}(address(token1), 1e8, true, 2, trader1);
+            // rematch trade
+        vm.prank(trader1);
+        MatchingEngine.CreateOrderInput[] memory updateOrderData = new MatchingEngine.CreateOrderInput[](1);
+        updateOrderData[0].base = address(token1);
+        updateOrderData[0].quote = address(weth);
+        updateOrderData[0].isBid = true;
+        updateOrderData[0].isLimit = true;
+        updateOrderData[0].orderId = ord0Result.id;
+        updateOrderData[0].price = 1e5;
+        updateOrderData[0].amount = 1e10;
+        updateOrderData[0].n = 5;
+        updateOrderData[0].recipient = trader1;
+        matchingEngine.updateOrders{value: 1e10}(updateOrderData);
+    }
+
+    function testCreateOrders() public {
+        super.setUp();
+        matchingEngine.addPair(address(token1), address(btc), 1e8, 0, address(token1), ExchangeOrderbook.MatchingMode.PriceTimePriority);
+        matchingEngine.addPair(address(weth), address(btc), 1e8, 0, address(token1), ExchangeOrderbook.MatchingMode.PriceTimePriority);
+        matchingEngine.addPair(address(btc), address(weth), 1e8, 0, address(token1), ExchangeOrderbook.MatchingMode.PriceTimePriority);
+        console.log("Base/Quote Pair: ", matchingEngine.getPair(address(token1), address(btc)));
+        vm.prank(trader1);
+        MatchingEngine.CreateOrderInput[] memory openOrders = new MatchingEngine.CreateOrderInput[](6);
+        // Order 1: limit Buy
+        openOrders[0].base = address(token1);
+        openOrders[0].quote = address(btc);
+        openOrders[0].isBid = true;
+        openOrders[0].isLimit = true;
+        openOrders[0].price = 1e5;
+        openOrders[0].amount = 1e18;
+        openOrders[0].n = 5;
+        openOrders[0].recipient = trader1;
+        // Order 2: limit Sell
+        openOrders[1].base = address(token1);
+        openOrders[1].quote = address(btc);
+        openOrders[1].isBid = false;
+        openOrders[1].isLimit = true;
+        openOrders[1].price = 1e5;
+        openOrders[1].amount = 1e18;
+        openOrders[1].n = 5;
+        openOrders[1].recipient = trader1;
+        // Order 3: market Buy
+        openOrders[2].base = address(token1);
+        openOrders[2].quote = address(btc);
+        openOrders[2].isBid = true;
+        openOrders[2].isLimit = false;
+        openOrders[2].price = 1e5;
+        openOrders[2].amount = 1e18;
+        openOrders[2].n = 5;
+        openOrders[2].recipient = trader1;
+        // Order 4: market Sell
+        openOrders[3].base = address(token1);
+        openOrders[3].quote = address(btc);
+        openOrders[3].isBid = false;
+        openOrders[3].isLimit = false; 
+        openOrders[3].price = 1e5;
+        openOrders[3].amount = 1e18;
+        openOrders[3].n = 5;
+        openOrders[3].recipient = trader1;
+        // Order 5: limit Buy ETH
+        openOrders[4].base = address(btc);
+        openOrders[4].quote = address(weth);
+        openOrders[4].isBid = true;
+        openOrders[4].isLimit = true;
+        openOrders[4].price = 1e5;
+        openOrders[4].amount = 1e18;
+        openOrders[4].n = 5;
+        // Order 6: limit Sell ETH
+        openOrders[5].base = address(weth);
+        openOrders[5].quote = address(btc);
+        openOrders[5].isBid = false;
+        openOrders[5].isLimit = true;
+        openOrders[5].price = 1e5;
+        openOrders[5].amount = 1e18;
+
+        // now create open orders
+        MatchingEngine.OrderResult[] memory orderResults = matchingEngine.createOrders{value: 2e18}(openOrders);
+        for (uint256 i = 0; i < orderResults.length; i++) {
+            console.log("Order Result: ", orderResults[i].makePrice, orderResults[i].placed, orderResults[i].id);
+        }
+    }
+
+    // Batch updateOrders must not be all-or-nothing: an order that is already
+    // gone (filled/cancelled between submission and execution) is skipped, not
+    // reverted, and the remaining valid updates still apply. The gone order is
+    // also NOT recreated (no duplicate order), so its result id is 0.
+    function testUpdateOrdersToleratesGoneOrder() public {
+        super.setUp();
+        matchingEngine.addPair(address(token1), address(btc), 1e8, 0, address(token1), ExchangeOrderbook.MatchingMode.PriceTimePriority);
+        vm.prank(trader1);
+        MatchingEngine.OrderResult memory ord0 =
+            matchingEngine.limitBuy(address(token1), address(btc), 1e8, 1e8, true, 2, trader1);
+
+        MatchingEngine.CreateOrderInput[] memory data = new MatchingEngine.CreateOrderInput[](2);
+        // [0] valid update of the resting order
+        data[0].base = address(token1);
+        data[0].quote = address(btc);
+        data[0].isBid = true;
+        data[0].isLimit = true;
+        data[0].orderId = ord0.id;
+        data[0].price = 1e8;
+        data[0].amount = 1e10;
+        data[0].n = 2;
+        data[0].recipient = trader1;
+        // [1] nonexistent/gone order -> must be skipped, not revert the batch
+        data[1].base = address(token1);
+        data[1].quote = address(btc);
+        data[1].isBid = true;
+        data[1].isLimit = true;
+        data[1].orderId = 999;
+        data[1].price = 1e8;
+        data[1].amount = 1e10;
+        data[1].n = 2;
+        data[1].recipient = trader1;
+
+        vm.prank(trader1);
+        MatchingEngine.OrderResult[] memory results = matchingEngine.updateOrders(data);
+        assert(results[0].id > 0); // valid update recreated a resting order
+        assert(results[1].id == 0); // gone order skipped, not recreated
+    }
+}
