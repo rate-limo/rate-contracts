@@ -25,10 +25,10 @@ contract PairTest is BaseSetup {
         matchingEngine.addPair(address(token1), address(token2), 300000000, 0, address(token1), ExchangeOrderbook.MatchingMode.PriceTimePriority);
     }
 
-    function testAddPairOnlyAllowedByAdmin() public {
+    function testAddPairIsPermissionless() public {
         vm.prank(booker);
-        vm.expectRevert();
-        matchingEngine.addPair(address(token1), address(token2), 300000000, 0, address(token1), ExchangeOrderbook.MatchingMode.PriceTimePriority);
+        address pair = matchingEngine.addPair(address(token1), address(token2), 300000000, 0, address(token1), ExchangeOrderbook.MatchingMode.PriceTimePriority);
+        assertEq(pair, matchingEngine.getPair(address(token1), address(token2)));
     }
 
     function testUpdatePairOnlyAllowedByAdmin() public {

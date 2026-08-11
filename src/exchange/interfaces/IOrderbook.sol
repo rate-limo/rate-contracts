@@ -15,6 +15,10 @@ interface IOrderbook {
 
     function getMatchingMode() external view returns (ExchangeOrderbook.MatchingMode);
 
+    function setOperator(address operator_) external;
+
+    function getOperator() external view returns (address);
+
     function setLmp(uint256 price) external;
 
     /// The price this pair opened the current block at -- the anchor a swap's spread rail
@@ -29,7 +33,13 @@ interface IOrderbook {
 
     function placeAsk(address owner, uint256 price, uint256 amount) external returns (uint32 id, bool foundDmt);
 
+    function placeAsk(address owner, uint256 price, uint256 amount, uint64 deadline)
+        external returns (uint32 id, bool foundDmt);
+
     function placeBid(address owner, uint256 price, uint256 amount) external returns (uint32 id, bool foundDmt);
+
+    function placeBid(address owner, uint256 price, uint256 amount, uint64 deadline)
+        external returns (uint32 id, bool foundDmt);
 
     function removeDmt(bool isBid) external returns (ExchangeOrderbook.Order memory order);
 
@@ -49,12 +59,24 @@ interface IOrderbook {
     /// @return orderId the head order at this price
     /// @return required how much of the taker's remaining this order needs to clear
     /// @return clear whether the order was taken off the queue by this call
-    /// @return dustOwner nonzero only when this call deleted-and-refunded an order
-    /// whose deposit converts to zero; the caller must emit that removal
-    /// @return dustRefund the amount returned to `dustOwner`
+    /// @return removedOwner nonzero when this call deleted and refunded an expired or dust order
+    /// @return removedRefund the amount returned to `removedOwner`
+    /// @return expired whether the removal was caused by its deadline
+    /// @return removedDeadline the expired order's deadline, otherwise zero
     function fpop(bool isBid, uint256 price, uint256 remaining)
         external
-        returns (uint32 orderId, uint256 required, bool clear, address dustOwner, uint256 dustRefund);
+        returns (
+            uint32 orderId,
+            uint256 required,
+            bool clear,
+            address removedOwner,
+            uint256 removedRefund,
+            bool expired,
+            uint64 removedDeadline
+        );
+
+    function expireOrder(bool isBid, uint32 orderId)
+        external returns (address owner, uint256 refunded, uint64 deadline);
 
     function getRequired(bool isBid, uint256 price, uint32 orderId) external view returns (uint256 required);
 

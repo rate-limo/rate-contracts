@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
 import {MatchingEngine} from "../src/exchange/MatchingEngine.sol";
+import {StopOrderEngine} from "../src/exchange/StopOrderEngine.sol";
 import {OrderbookFactory} from "../src/exchange/orderbooks/OrderbookFactory.sol";
 import {PoolFactory} from "../src/swap/PoolFactory.sol";
 import {PositionManager} from "../src/swap/PositionManager.sol";
@@ -44,7 +45,7 @@ contract DeployAll is Script {
     /// these -- feeOf falls through to defaultMakerFee/defaultTakerFee, which start at
     /// zero, so a deployment that skips this runs entirely fee-free. 100000 = 0.1%, the
     /// value every swap fixture is written against.
-    uint32 constant MAKER_FEE = 100000;
+    uint32 constant MAKER_FEE = 0;
     uint32 constant TAKER_FEE = 100000;
 
     /// Share of the maker fee rebated to the pool positions that supplied the liquidity,
@@ -102,6 +103,12 @@ contract DeployAll is Script {
         engine.setDefaultFee(false, TAKER_FEE);
         engine.setPoolFeeShare(POOL_FEE_SHARE);
 
+        // Stop orders are intentionally a separate engine. It must be deployed before
+        // pairs are listed: MatchingEngine.addPair creates the corresponding stop book
+        // only when this address is already wired.
+        StopOrderEngine stopOrderEngine = new StopOrderEngine(address(engine));
+        engine.setStopOrderEngine(address(stopOrderEngine));
+
         // ---- swap system ----
         PoolFactory poolFactory = new PoolFactory();
         poolFactory.initialize(address(engine));
@@ -123,6 +130,8 @@ contract DeployAll is Script {
         // Fail loudly rather than leaving a half-wired chain behind.
         require(engine.poolFactory() == address(poolFactory), "poolFactory not wired");
         require(engine.swapRouter() == address(router), "swapRouter not wired");
+        require(engine.getStopOrderEngine() == address(stopOrderEngine), "stopOrderEngine not wired");
+        require(stopOrderEngine.matchingEngine() == address(engine), "stop engine points at wrong engine");
         require(poolFactory.impl() != address(0), "pool implementation missing");
         require(poolFactory.positionManager() == address(positionManager), "positionManager not wired");
         require(positionManager.router() == address(router), "pm.router not wired");
@@ -133,6 +142,7 @@ contract DeployAll is Script {
         console.log("WETH                 %s", weth);
         console.log("OrderbookFactory     %s", address(orderbookFactory));
         console.log("MatchingEngine       %s", address(engine));
+        console.log("StopOrderEngine      %s", address(stopOrderEngine));
         console.log("PoolFactory          %s", address(poolFactory));
         console.log("PoolImplementation   %s", poolFactory.impl());
         console.log("PositionManager      %s", address(positionManager));
@@ -142,6 +152,7 @@ contract DeployAll is Script {
         console.log("CHAINID=11155931");
         console.log("RPC=https://testnet.riselabs.xyz/");
         console.log("MATCHING_ENGINE_ADDRESS=%s", address(engine));
+        console.log("STOP_ORDER_ENGINE_ADDRESS=%s", address(stopOrderEngine));
         console.log("POOL_FACTORY_ADDRESS=%s", address(poolFactory));
         console.log("POSITION_MANAGER_ADDRESS=%s", address(positionManager));
         console.log("SWAP_ROUTER_ADDRESS=%s", address(router));

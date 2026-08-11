@@ -6,6 +6,16 @@ import {IOrderbook} from "../interfaces/IOrderbook.sol";
 import {TransferHelper} from "./TransferHelper.sol";
 
 library MatchingLib {
+    struct LimitOrderInput {
+        address pair;
+        uint256 amount;
+        address give;
+        address recipient;
+        bool isBid;
+        uint256 limitPrice;
+        uint32 n;
+        uint16 orderHistoryId;
+    }
     event OrderMatched(
         address pair,
         uint16 orderHistoryId,
@@ -31,6 +41,17 @@ library MatchingLib {
         bool isBid,
         uint256 price,
         address owner,
+        uint256 refunded
+    );
+
+    event OrderExpired(
+        address indexed pair,
+        uint32 indexed orderId,
+        address indexed owner,
+        bool isBid,
+        bool isStop,
+        bool isMarket,
+        uint64 deadline,
         uint256 refunded
     );
 
@@ -64,20 +85,29 @@ library MatchingLib {
             // Scoped so the eviction-only values do not live across the rest of the
             // body -- without this the frame is one local too deep to compile.
             {
-                address dustOwner;
-                uint256 dustRefund;
-                (orderId, required, clear, dustOwner, dustRefund) = IOrderbook(matchAtInput.pair).fpop(
+                address removedOwner;
+                uint256 removedRefund;
+                bool expired;
+                uint64 removedDeadline;
+                (orderId, required, clear, removedOwner, removedRefund, expired, removedDeadline) = IOrderbook(matchAtInput.pair).fpop(
                     !matchAtInput.isBid, matchAtInput.price, remaining
                 );
                 // Unfillable: fpop already deleted it and refunded its owner. Checked
                 // before the fill branches because `remaining <= required` can never
                 // hold here (remaining > 0 is the loop condition, required == 0).
                 if (required == 0) {
-                    if (dustOwner != address(0)) {
-                        emit OrderDusted(
-                            matchAtInput.pair, matchAtInput.orderHistoryId, orderId,
-                            !matchAtInput.isBid, matchAtInput.price, dustOwner, dustRefund
-                        );
+                    if (removedOwner != address(0)) {
+                        if (expired) {
+                            emit OrderExpired(
+                                matchAtInput.pair, orderId, removedOwner, !matchAtInput.isBid,
+                                false, false, removedDeadline, removedRefund
+                            );
+                        } else {
+                            emit OrderDusted(
+                                matchAtInput.pair, matchAtInput.orderHistoryId, orderId,
+                                !matchAtInput.isBid, matchAtInput.price, removedOwner, removedRefund
+                            );
+                        }
                     }
                     // Counted against the eviction cap, NOT against `i`. The taker
                     // received nothing here; charging them a match lets a queue of
@@ -115,85 +145,77 @@ library MatchingLib {
         return (remaining, k);
     }
 
-    function limitOrder(
-        address pair,
-        uint256 amount,
-        address give,
-        address recipient,
-        bool isBid,
-        uint256 limitPrice,
-        uint32 n,
-        uint16 orderHistoryId,
-        uint32 maxMatches
-    ) public returns (uint256 remaining, uint256 bidHead, uint256 askHead) {
-        if (n > maxMatches) {
-            revert TooManyMatches(n);
+    function limitOrder(LimitOrderInput memory input, uint32 maxMatches)
+        public returns (uint256 remaining, uint256 bidHead, uint256 askHead, uint32 matchesUsed)
+    {
+        if (input.n > maxMatches) {
+            revert TooManyMatches(input.n);
         }
-        remaining = amount;
+        remaining = input.amount;
         IMatchingEngine.LimitOrderState memory state = IMatchingEngine.LimitOrderState({
-            lmp: IOrderbook(pair).lmp(),
+            lmp: IOrderbook(input.pair).lmp(),
             i: 0,
             prevI: 0
         });
-        bidHead = IOrderbook(pair).clearEmptyHead(true);
-        askHead = IOrderbook(pair).clearEmptyHead(false);
-        if (isBid) {
+        bidHead = IOrderbook(input.pair).clearEmptyHead(true);
+        askHead = IOrderbook(input.pair).clearEmptyHead(false);
+        if (input.isBid) {
             if (state.lmp != 0) {
-                if (askHead != 0 && limitPrice < askHead) {
-                    return (remaining, bidHead, askHead);
+                if (askHead != 0 && input.limitPrice < askHead) {
+                    return (remaining, bidHead, askHead, 0);
                 } else if (askHead == 0) {
-                    return (remaining, bidHead, askHead);
+                    return (remaining, bidHead, askHead, 0);
                 }
             }
-            while (remaining > 0 && askHead != 0 && askHead <= limitPrice && state.i < n) {
+            while (remaining > 0 && askHead != 0 && askHead <= input.limitPrice && state.i < input.n) {
                 state.lmp = askHead;
                 state.prevI = state.i;
                 (remaining, state.i) = matchAt(IMatchingEngine.MatchAtInput({
-                    pair: pair,
-                    give: give,
-                    recipient: recipient,
-                    isBid: isBid,
+                    pair: input.pair,
+                    give: input.give,
+                    recipient: input.recipient,
+                    isBid: input.isBid,
                     amount: remaining,
-                    total: amount,
+                    total: input.amount,
                     price: askHead,
                     i: state.i,
-                    n: n,
-                    orderHistoryId: orderHistoryId
+                    n: input.n,
+                    orderHistoryId: input.orderHistoryId
                 }));
-                askHead = (state.i == state.prevI) ? 0 : IOrderbook(pair).clearEmptyHead(false);
+                askHead = (state.i == state.prevI) ? 0 : IOrderbook(input.pair).clearEmptyHead(false);
             }
-            bidHead = IOrderbook(pair).clearEmptyHead(true);
+            bidHead = IOrderbook(input.pair).clearEmptyHead(true);
         } else {
             if (state.lmp != 0) {
-                if (bidHead != 0 && limitPrice > bidHead) {
-                    return (remaining, bidHead, askHead);
+                if (bidHead != 0 && input.limitPrice > bidHead) {
+                    return (remaining, bidHead, askHead, 0);
                 } else if (bidHead == 0) {
-                    return (remaining, bidHead, askHead);
+                    return (remaining, bidHead, askHead, 0);
                 }
             }
-            while (remaining > 0 && bidHead != 0 && bidHead >= limitPrice && state.i < n) {
+            while (remaining > 0 && bidHead != 0 && bidHead >= input.limitPrice && state.i < input.n) {
                 state.lmp = bidHead;
                 state.prevI = state.i;
                 (remaining, state.i) = matchAt(IMatchingEngine.MatchAtInput({
-                    pair: pair,
-                    give: give,
-                    recipient: recipient,
-                    isBid: isBid,
+                    pair: input.pair,
+                    give: input.give,
+                    recipient: input.recipient,
+                    isBid: input.isBid,
                     amount: remaining,
-                    total: amount,
+                    total: input.amount,
                     price: bidHead,
                     i: state.i,
-                    n: n,
-                    orderHistoryId: orderHistoryId
+                    n: input.n,
+                    orderHistoryId: input.orderHistoryId
                 }));
-                bidHead = (state.i == state.prevI) ? 0 : IOrderbook(pair).clearEmptyHead(true);
+                bidHead = (state.i == state.prevI) ? 0 : IOrderbook(input.pair).clearEmptyHead(true);
             }
-            askHead = IOrderbook(pair).clearEmptyHead(false);
+            askHead = IOrderbook(input.pair).clearEmptyHead(false);
         }
         if (state.lmp != 0) {
-            IOrderbook(pair).setLmp(state.lmp);
-            emit NewMarketPrice(pair, state.lmp, isBid);
+            IOrderbook(input.pair).setLmp(state.lmp);
+            emit NewMarketPrice(input.pair, state.lmp, input.isBid);
         }
-        return (remaining, bidHead, askHead);
+        return (remaining, bidHead, askHead, state.i);
     }
 }

@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import {Test} from "forge-std/Test.sol";
 import {MatchingEngine} from "../../src/exchange/MatchingEngine.sol";
+import {StopOrderEngine} from "../../src/exchange/StopOrderEngine.sol";
 import {OrderbookFactory} from "../../src/exchange/orderbooks/OrderbookFactory.sol";
 import {PoolFactory} from "../../src/swap/PoolFactory.sol";
 import {PositionManager} from "../../src/swap/PositionManager.sol";
@@ -25,6 +26,7 @@ import {ExchangeOrderbook} from "../../src/exchange/libraries/ExchangeOrderbook.
 /// until a user tries to trade, which is why it is pinned here.
 contract DeploymentWiringTest is Test {
     MatchingEngine engine;
+    StopOrderEngine stopOrderEngine;
     OrderbookFactory orderbookFactory;
     PoolFactory poolFactory;
     PositionManager positionManager;
@@ -50,8 +52,11 @@ contract DeploymentWiringTest is Test {
 
         engine.setDefaultSpread(100000, 100000, true); // production market default, 0.1%
         engine.setDefaultSpread(3000000, 3000000, false); // production limit default, 3%
-        engine.setDefaultFee(true, 100000);
+        engine.setDefaultFee(true, 0);
         engine.setDefaultFee(false, 100000);
+
+        stopOrderEngine = new StopOrderEngine(address(engine));
+        engine.setStopOrderEngine(address(stopOrderEngine));
 
         base = new MockToken("Base", "BASE", 18);
         quote = new MockToken("Quote", "QUOTE", 18);
@@ -111,6 +116,8 @@ contract DeploymentWiringTest is Test {
 
         assertEq(engine.poolFactory(), address(poolFactory), "engine.poolFactory");
         assertEq(engine.swapRouter(), address(router), "engine.swapRouter");
+        assertEq(engine.getStopOrderEngine(), address(stopOrderEngine), "engine.stopOrderEngine");
+        assertEq(stopOrderEngine.matchingEngine(), address(engine), "stopOrderEngine.matchingEngine");
         assertTrue(poolFactory.impl() != address(0), "pool implementation deployed by initialize()");
         assertEq(poolFactory.positionManager(), address(positionManager), "factory.positionManager");
         assertEq(positionManager.poolFactory(), address(poolFactory), "pm.poolFactory");

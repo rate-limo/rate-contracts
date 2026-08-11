@@ -11,7 +11,7 @@ library ExchangeOrderbook {
     /// which ended in an out-of-gas revert carrying no return data.
     ///
     /// The enum is kept with a single member rather than deleted so `addPair`,
-    /// `createBook`, `Orderbook.initialize` and CoinGenerator's admin-set QuoteOption all
+    /// `createBook`, `Orderbook.initialize` and AssetGenerator's admin-set QuoteOption all
     /// keep their signatures. NOTE the renumbering: PriceTimePriority is now **0**, where
     /// it used to be 1. Callers that passed 1 will revert on an invalid enum value, and
     /// callers that passed 0 silently get price-time priority instead of size priority —
@@ -25,6 +25,8 @@ library ExchangeOrderbook {
         address owner;
         uint256 price;
         uint256 depositAmount;
+        /// Unix timestamp after which the order cannot fill. Zero means GTC.
+        uint64 deadline;
     }
 
     // Order Linked List
@@ -86,14 +88,20 @@ library ExchangeOrderbook {
         return first;
     }
 
-    function _createOrder(OrderStorage storage self, address owner, uint256 price, uint256 depositAmount)
+    function _createOrder(
+        OrderStorage storage self,
+        address owner,
+        uint256 price,
+        uint256 depositAmount,
+        uint64 deadline
+    )
         internal
         returns (uint32 id, bool foundDmt)
     {
         if (price == 0) {
             revert PriceIsZero(price);
         }
-        Order memory order = Order({owner: owner, price: price, depositAmount: depositAmount});
+        Order memory order = Order({owner: owner, price: price, depositAmount: depositAmount, deadline: deadline});
         // set foundDmt to false by default
         foundDmt = false;
         // In order to prevent order overflow, order id must start from 1

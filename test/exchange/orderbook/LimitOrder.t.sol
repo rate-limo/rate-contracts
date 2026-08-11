@@ -7,6 +7,7 @@ import {MockBTC} from "../../../src/mock/MockBTC.sol";
 import {ErrToken} from "../../../src/mock/MockTokenOver18Decimals.sol";
 import {Utils} from "../../utils/Utils.sol";
 import {MatchingEngine} from "../../../src/exchange/MatchingEngine.sol";
+import {IMatchingEngine} from "../../../src/exchange/interfaces/IMatchingEngine.sol";
 import {OrderbookFactory} from "../../../src/exchange/orderbooks/OrderbookFactory.sol";
 import {Orderbook} from "../../../src/exchange/orderbooks/Orderbook.sol";
 import {IOrderbook} from "../../../src/exchange/interfaces/IOrderbook.sol";
@@ -18,6 +19,83 @@ import {console} from "forge-std/console.sol";
 import {stdStorage, StdStorage, Test} from "forge-std/Test.sol";
 
 contract LimitOrderTest is BaseSetup {
+    function testDeadlineIsStoredAndPermissionlessExpiryRefunds() public {
+        super.setUp();
+        matchingEngine.addPair(
+            address(token1), address(token2), 1e8, 0, address(token1),
+            ExchangeOrderbook.MatchingMode.PriceTimePriority
+        );
+        uint256 balanceBefore = token2.balanceOf(trader1);
+        uint64 deadline = uint64(block.timestamp + 1 hours);
+        vm.prank(trader1);
+        IMatchingEngine.OrderResult memory result = matchingEngine.limitBuyWithDeadline(
+            address(token1), address(token2), 1e8, 100e18, true, 2, trader1, deadline
+        );
+        ExchangeOrderbook.Order memory order = matchingEngine.getOrder(
+            address(token1), address(token2), true, result.id
+        );
+        assertEq(order.deadline, deadline);
+
+        vm.warp(uint256(deadline) + 1);
+        vm.prank(trader2);
+        matchingEngine.expireOrder(address(token1), address(token2), true, result.id);
+        assertEq(token2.balanceOf(trader1), balanceBefore, "expired deposit refunded");
+        assertEq(
+            matchingEngine.getOrder(address(token1), address(token2), true, result.id).owner,
+            address(0),
+            "expired order removed"
+        );
+    }
+
+    function testDeadlineEntrypointsRejectExpiredTransactions() public {
+        super.setUp();
+        matchingEngine.addPair(
+            address(token1), address(token2), 1e8, 0, address(token1),
+            ExchangeOrderbook.MatchingMode.PriceTimePriority
+        );
+        vm.warp(100);
+        vm.startPrank(trader1);
+        vm.expectRevert(abi.encodeWithSelector(MatchingEngine.DeadlineExpired.selector, uint64(99), uint256(100)));
+        matchingEngine.limitSellWithDeadline(
+            address(token1), address(token2), 1e8, 1e18, true, 2, trader1, 99
+        );
+        vm.expectRevert(abi.encodeWithSelector(MatchingEngine.DeadlineExpired.selector, uint64(99), uint256(100)));
+        matchingEngine.marketBuyWithDeadline(
+            address(token1), address(token2), 100e18, false, 2, trader1, 1_000_000, 99
+        );
+        vm.stopPrank();
+    }
+
+    function testMatchingSkipsExpiredHeadAndContinues() public {
+        super.setUp();
+        matchingEngine.addPair(
+            address(token1), address(token2), 1e8, 0, address(token1),
+            ExchangeOrderbook.MatchingMode.PriceTimePriority
+        );
+        uint64 deadline = uint64(block.timestamp + 1 hours);
+        uint256 makerBaseBefore = token1.balanceOf(trader1);
+        vm.startPrank(trader1);
+        IMatchingEngine.OrderResult memory expired = matchingEngine.limitSellWithDeadline(
+            address(token1), address(token2), 1e8, 1e18, true, 2, trader1, deadline
+        );
+        IMatchingEngine.OrderResult memory live = matchingEngine.limitSell(
+            address(token1), address(token2), 1e8, 1e18, true, 2, trader1
+        );
+        vm.stopPrank();
+
+        vm.warp(uint256(deadline) + 1);
+        uint256 takerBaseBefore = token1.balanceOf(trader2);
+        vm.prank(trader2);
+        matchingEngine.limitBuy(
+            address(token1), address(token2), 1e8, 100e18, false, 2, trader2
+        );
+
+        assertEq(token1.balanceOf(trader2) - takerBaseBefore, 0.999e18, "live order filled");
+        assertEq(token1.balanceOf(trader1), makerBaseBefore - 1e18, "expired deposit refunded");
+        assertEq(matchingEngine.getOrder(address(token1), address(token2), false, expired.id).owner, address(0));
+        assertEq(matchingEngine.getOrder(address(token1), address(token2), false, live.id).owner, address(0));
+    }
+
     function testLimitTradeWithDiffDecimals() public {
         super.setUp();
         matchingEngine.addPair(address(token1), address(btc), 1e8, 0, address(token1), ExchangeOrderbook.MatchingMode.PriceTimePriority);

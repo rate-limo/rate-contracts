@@ -11,6 +11,9 @@ import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 import {IMatchingEngine} from "./interfaces/IMatchingEngine.sol";
 import {MatchingLib} from "./libraries/MatchingLib.sol";
 import {IPoolFactory} from "../swap/interfaces/IPoolFactory.sol";
+import {IStopOrderEngine} from "./interfaces/IStopOrderEngine.sol";
+import {StopOrderHandoffLib} from "./libraries/StopOrderHandoffLib.sol";
+import {MarketMakePriceLib} from "./libraries/MarketMakePriceLib.sol";
 
 interface IProtocol {
     function feeOf(
@@ -53,6 +56,12 @@ contract MatchingEngine is ReentrancyGuard, AccessControl, IMatchingEngine {
     // for orders whose owner is that pair's Pool. DENOM=1e8 scale. Defaults to 0 (no
     // behavior change) -- see docs/swap/implementation-plan.md Task 4.
     uint32 public poolFeeShare;
+    struct PairFeePolicy {
+        uint32 makerFee;
+        uint32 takerFee;
+        uint8 feeClass;
+        bool configured;
+    }
     // Factories
     address public orderbookFactory;
     address public poolFactory;
@@ -114,7 +123,6 @@ contract MatchingEngine is ReentrancyGuard, AccessControl, IMatchingEngine {
     );
 
     event NewMarketPrice(address pair, uint256 price, bool isBid);
-    event ListingCostSet(address payment, uint256 amount);
 
     /**
      * @dev This event is emitted when an order is successfully matched with a counterparty.
@@ -164,8 +172,20 @@ contract MatchingEngine is ReentrancyGuard, AccessControl, IMatchingEngine {
         uint256 placed
     );
 
+    event OrderExpired(
+        address indexed pair,
+        uint32 indexed orderId,
+        address indexed owner,
+        bool isBid,
+        bool isStop,
+        bool isMarket,
+        uint64 deadline,
+        uint256 refunded
+    );
+
     event PairAdded(
-        address pair,
+        address indexed pair,
+        address indexed creator,
         TransferHelper.TokenInfo base,
         TransferHelper.TokenInfo quote,
         uint256 listingPrice,
@@ -181,13 +201,25 @@ contract MatchingEngine is ReentrancyGuard, AccessControl, IMatchingEngine {
         uint256 listingDate
     );
 
+    event PairFeeClassSet(
+        address indexed pair,
+        uint8 feeClass,
+        uint32 makerFee,
+        uint32 takerFee
+    );
+    event DefaultFeePolicySet(
+        uint8 indexed feeClass, uint32 makerFee, uint32 takerFee, uint32 poolFeeShare
+    );
+
     event PairCreate2(address deployer, bytes bytecode);
 
     error TooManyMatches(uint256 n);
-    error InvalidTerminal(address terminal);
     error OrderSizeTooSmall(uint256 amount, uint256 minRequired);
     error InvalidRole(bytes32 role, address sender);
     error InvalidPair(address base, address quote, address pair);
+    error InvalidFeePair(address pair);
+    error InvalidFeeClass(uint8 feeClass);
+    error InvalidFeeRate(uint32 fee, uint256 denom);
     error PairNotListedYet(
         address base,
         address quote,
@@ -199,6 +231,8 @@ contract MatchingEngine is ReentrancyGuard, AccessControl, IMatchingEngine {
     error FactoryNotInitialized(address factory);
     error AlreadyInitialized(bool init);
     error PoolFeeShareExceedsDenom(uint32 poolFeeShare, uint256 denom);
+    error DeadlineExpired(uint64 deadline, uint256 timeNow);
+    error OrderNotExpired(uint64 deadline, uint256 timeNow);
     error OrderCancelFailed(
         address orderbook,
         uint32 orderId,
@@ -217,6 +251,21 @@ contract MatchingEngine is ReentrancyGuard, AccessControl, IMatchingEngine {
     /// while it is unset, `Pool.swap` is closed to everyone. Wire this before listing.
     address public swapRouter;
 
+    /// Separate stop-order lifecycle and matching module. Appended storage.
+    address private stopOrderEngine;
+
+    /// Canonical-pair fee policy keyed by the existing orderbook address. Appended
+    /// storage: fee is state, never part of CREATE2 identity, so liquidity cannot
+    /// fragment into duplicate books for the same base/quote assets.
+    mapping(address => PairFeePolicy) public pairFeePolicy;
+
+    /// Optional modular fee-policy controller. Appended storage.
+    address public feeManager;
+
+    /// Transient call context used only while a deadline-aware order is being made.
+    /// Appended after all pre-existing storage to preserve proxy upgrade layout.
+    uint64 private orderDeadlineContext;
+
     error NotSwapRouter(address caller, address swapRouter);
 
     /// Emitted alongside NewMarketPrice on a swap report. `reported` is the price the
@@ -227,6 +276,14 @@ contract MatchingEngine is ReentrancyGuard, AccessControl, IMatchingEngine {
 
     function setSwapRouter(address swapRouter_) external onlyRole(DEFAULT_ADMIN_ROLE) {
         swapRouter = swapRouter_;
+    }
+
+    function setStopOrderEngine(address stopOrderEngine_) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        stopOrderEngine = stopOrderEngine_;
+    }
+
+    function getStopOrderEngine() external view returns (address) {
+        return stopOrderEngine;
     }
 
     /// Records the price a swap actually matched at as the pair's last-matched price,
@@ -324,6 +381,7 @@ contract MatchingEngine is ReentrancyGuard, AccessControl, IMatchingEngine {
             .getByteCode();
         init = true;
         maxMatches = 20;
+        emit DefaultFeePolicySet(2, defaultMakerFee, defaultTakerFee, poolFeeShare);
         emit PairCreate2(orderbookFactory, bytecode);
     }
 
@@ -351,6 +409,31 @@ contract MatchingEngine is ReentrancyGuard, AccessControl, IMatchingEngine {
         } else {
             defaultTakerFee = fee_;
         }
+        emit DefaultFeePolicySet(2, defaultMakerFee, defaultTakerFee, poolFeeShare);
+        return true;
+    }
+
+    function setPairFeeClass(
+        address pair,
+        uint8 feeClass,
+        uint32 makerFee,
+        uint32 takerFee
+    ) external returns (bool success) {
+        if (msg.sender != feeManager) _checkRole(DEFAULT_ADMIN_ROLE);
+        if (pair == address(0) || pair.code.length == 0) revert InvalidFeePair(pair);
+        if (feeClass > 4) revert InvalidFeeClass(feeClass);
+        if (makerFee > DENOM || takerFee > DENOM) {
+            revert InvalidFeeRate(makerFee > takerFee ? makerFee : takerFee, DENOM);
+        }
+        pairFeePolicy[pair] = PairFeePolicy(makerFee, takerFee, feeClass, true);
+        emit PairFeeClassSet(pair, feeClass, makerFee, takerFee);
+        return true;
+    }
+
+    function setFeeManager(address feeManager_)
+        external onlyRole(DEFAULT_ADMIN_ROLE) returns (bool success)
+    {
+        feeManager = feeManager_;
         return true;
     }
 
@@ -361,6 +444,7 @@ contract MatchingEngine is ReentrancyGuard, AccessControl, IMatchingEngine {
             revert PoolFeeShareExceedsDenom(poolFeeShare_, DENOM);
         }
         poolFeeShare = poolFeeShare_;
+        emit DefaultFeePolicySet(2, defaultMakerFee, defaultTakerFee, poolFeeShare_);
         return true;
     }
 
@@ -376,29 +460,6 @@ contract MatchingEngine is ReentrancyGuard, AccessControl, IMatchingEngine {
     ) external onlyRole(DEFAULT_ADMIN_ROLE) returns (bool success) {
         maxMatches = n;
         return true;
-    }
-
-    /**
-     * @dev Set the listing cost for a token. Each pair costs minimum 2GB of data storage in a month, costing 0.1 ETH.
-     * @param terminal terminal name
-     * @param payment address of payment token
-     * @param amount amount of token
-     *
-     * Requirements:
-     * - `msg.sender` must have the default admin role.
-     */
-    function setListingCost(
-        string memory terminal,
-        address payment,
-        uint256 amount
-    ) external onlyRole(DEFAULT_ADMIN_ROLE) returns (uint256) {
-        IOrderbookFactory(orderbookFactory).setListingCost(
-            terminal,
-            payment,
-            amount
-        );
-        emit ListingCostSet(payment, amount);
-        return amount;
     }
 
     function setDefaultSpread(
@@ -471,6 +532,7 @@ contract MatchingEngine is ReentrancyGuard, AccessControl, IMatchingEngine {
         );
 
         // get spread limits
+        slippageLimit = _pairSlippageLimit(base, quote, slippageLimit);
         orderData.spreadLimit = slippageLimit <=
             getSpread(orderData.pair, true, true)
             ? slippageLimit
@@ -582,42 +644,31 @@ contract MatchingEngine is ReentrancyGuard, AccessControl, IMatchingEngine {
             );
     }
 
+    function marketBuyWithDeadline(
+        address base,
+        address quote,
+        uint256 quoteAmount,
+        bool isMaker,
+        uint32 n,
+        address recipient,
+        uint32 slippageLimit,
+        uint64 deadline
+    ) external nonReentrant returns (OrderResult memory result) {
+        _checkDeadline(deadline);
+        orderDeadlineContext = deadline;
+        count = _nextHistoryId();
+        result = _marketBuy(base, quote, quoteAmount, isMaker, n, recipient, slippageLimit, count);
+        orderDeadlineContext = 0;
+    }
+
     function _detMarketBuyMakePrice(
         address orderbook,
         uint256 bidHead,
         uint256 askHead,
         uint32 spread
     ) internal view returns (uint256 price) {
-        uint256 up;
         uint256 lmp = IOrderbook(orderbook).lmp();
-        if (askHead == 0 && bidHead == 0) {
-            // lmp must exist unless there has been no order in orderbook
-            if (lmp != 0) {
-                up = (lmp * (DENOM + spread)) / DENOM;
-                return up;
-            }
-        } else if (askHead == 0 && bidHead != 0) {
-            if (lmp != 0) {
-                uint256 temp = (bidHead >= lmp ? bidHead : lmp);
-                up = (temp * (DENOM + spread)) / DENOM;
-                return up;
-            }
-            up = (bidHead * (DENOM + spread)) / DENOM;
-            return up;
-        } else if (askHead != 0 && bidHead == 0) {
-            if (lmp != 0) {
-                up = (lmp * (DENOM + spread)) / DENOM;
-                return askHead >= up ? up : askHead;
-            }
-            return askHead;
-        } else {
-            if (lmp != 0) {
-                uint256 temp = (bidHead >= lmp ? bidHead : lmp);
-                up = (temp * (DENOM + spread)) / DENOM;
-                return askHead >= up ? up : askHead;
-            }
-            return askHead;
-        }
+        return MarketMakePriceLib.buy(lmp, bidHead, askHead, spread);
     }
 
     function _marketSell(
@@ -640,6 +691,7 @@ contract MatchingEngine is ReentrancyGuard, AccessControl, IMatchingEngine {
         );
 
         // get spread limits
+        slippageLimit = _pairSlippageLimit(base, quote, slippageLimit);
         orderData.spreadLimit = slippageLimit <=
             getSpread(orderData.pair, false, true)
             ? slippageLimit
@@ -750,44 +802,31 @@ contract MatchingEngine is ReentrancyGuard, AccessControl, IMatchingEngine {
             );
     }
 
+    function marketSellWithDeadline(
+        address base,
+        address quote,
+        uint256 baseAmount,
+        bool isMaker,
+        uint32 n,
+        address recipient,
+        uint32 slippageLimit,
+        uint64 deadline
+    ) external nonReentrant returns (OrderResult memory result) {
+        _checkDeadline(deadline);
+        orderDeadlineContext = deadline;
+        count = _nextHistoryId();
+        result = _marketSell(base, quote, baseAmount, isMaker, n, recipient, slippageLimit, count);
+        orderDeadlineContext = 0;
+    }
+
     function _detMarketSellMakePrice(
         address orderbook,
         uint256 bidHead,
         uint256 askHead,
         uint32 spread
     ) internal view returns (uint256 price) {
-        uint256 down;
         uint256 lmp = IOrderbook(orderbook).lmp();
-        if (askHead == 0 && bidHead == 0) {
-            // lmp must exist unless there has been no order in orderbook
-            if (lmp != 0) {
-                down = (lmp * (DENOM - spread)) / DENOM;
-                return down == 0 ? 1 : down;
-            }
-        } else if (askHead == 0 && bidHead != 0) {
-            if (lmp != 0) {
-                down = (lmp * (DENOM - spread)) / DENOM;
-                down = down <= bidHead ? bidHead : down;
-                return down == 0 ? 1 : down;
-            }
-            return bidHead;
-        } else if (askHead != 0 && bidHead == 0) {
-            if (lmp != 0) {
-                uint256 temp = lmp <= askHead ? lmp : askHead;
-                down = (temp * (DENOM - spread)) / DENOM;
-                return down == 0 ? 1 : down;
-            }
-            down = (askHead * (DENOM - spread)) / DENOM;
-            return down == 0 ? 1 : down;
-        } else {
-            if (lmp != 0) {
-                uint256 temp = lmp <= askHead ? lmp : askHead;
-                down = (temp * (DENOM - spread)) / DENOM;
-                down = down <= bidHead ? bidHead : down;
-                return down == 0 ? 1 : down;
-            }
-            return bidHead;
-        }
+        return MarketMakePriceLib.sell(lmp, bidHead, askHead, spread);
     }
 
     /**
@@ -854,6 +893,38 @@ contract MatchingEngine is ReentrancyGuard, AccessControl, IMatchingEngine {
                 slippageLimit,
                 count
             );
+    }
+
+    function marketBuyETHWithDeadline(
+        address base,
+        bool isMaker,
+        uint32 n,
+        address recipient,
+        uint32 slippageLimit,
+        uint64 deadline
+    ) external payable nonReentrant returns (OrderResult memory result) {
+        _checkDeadline(deadline);
+        orderDeadlineContext = deadline;
+        IWETH(WETH).deposit{value: msg.value}();
+        count = _nextHistoryId();
+        result = _marketBuy(base, WETH, msg.value, isMaker, n, recipient, slippageLimit, count);
+        orderDeadlineContext = 0;
+    }
+
+    function marketSellETHWithDeadline(
+        address quote,
+        bool isMaker,
+        uint32 n,
+        address recipient,
+        uint32 slippageLimit,
+        uint64 deadline
+    ) external payable nonReentrant returns (OrderResult memory result) {
+        _checkDeadline(deadline);
+        orderDeadlineContext = deadline;
+        IWETH(WETH).deposit{value: msg.value}();
+        count = _nextHistoryId();
+        result = _marketSell(WETH, quote, msg.value, isMaker, n, recipient, slippageLimit, count);
+        orderDeadlineContext = 0;
     }
 
     function _limitBuy(
@@ -985,6 +1056,23 @@ contract MatchingEngine is ReentrancyGuard, AccessControl, IMatchingEngine {
             );
     }
 
+    function limitBuyWithDeadline(
+        address base,
+        address quote,
+        uint256 price,
+        uint256 quoteAmount,
+        bool isMaker,
+        uint32 n,
+        address recipient,
+        uint64 deadline
+    ) external nonReentrant returns (OrderResult memory result) {
+        _checkDeadline(deadline);
+        orderDeadlineContext = deadline;
+        count = _nextHistoryId();
+        result = _limitBuy(base, quote, price, quoteAmount, isMaker, n, recipient, count);
+        orderDeadlineContext = 0;
+    }
+
     function _detLimitBuyMakePrice(
         address orderbook,
         uint256 lp,
@@ -992,39 +1080,8 @@ contract MatchingEngine is ReentrancyGuard, AccessControl, IMatchingEngine {
         uint256 askHead,
         uint32 spread
     ) internal view returns (uint256 price, uint256 lmp) {
-        uint256 up;
         lmp = IOrderbook(orderbook).lmp();
-        if (askHead == 0 && bidHead == 0) {
-            if (lmp != 0) {
-                up = (lmp * (DENOM + spread)) / DENOM;
-                return (lp >= up ? up : lp, lmp);
-            }
-            return (lp, lmp);
-        } else if (askHead == 0 && bidHead != 0) {
-            if (lmp != 0) {
-                up = (lmp * (DENOM + spread)) / DENOM;
-                return (lp >= up ? up : lp, lmp);
-            }
-            up = (bidHead * (DENOM + spread)) / DENOM;
-            return (lp >= up ? up : lp, lmp);
-        } else if (askHead != 0 && bidHead == 0) {
-            if (lmp != 0) {
-                up = (lmp * (DENOM + spread)) / DENOM;
-                up = lp >= up ? up : lp;
-                return (up >= askHead ? askHead : up, lmp);
-            }
-            up = (askHead * (DENOM + spread)) / DENOM;
-            up = lp >= up ? up : lp;
-            return (up >= askHead ? askHead : up, lmp);
-        } else {
-            if (lmp != 0) {
-                up = (lmp * (DENOM + spread)) / DENOM;
-                up = lp >= up ? up : lp;
-                return (up >= askHead ? askHead : up, lmp);
-            }
-            // upper limit on make price must not go above ask price
-            return (lp >= askHead ? askHead : lp, lmp);
-        }
+        return (MarketMakePriceLib.limitBuy(lmp, lp, bidHead, askHead, spread), lmp);
     }
 
     function _limitSell(
@@ -1154,6 +1211,23 @@ contract MatchingEngine is ReentrancyGuard, AccessControl, IMatchingEngine {
             );
     }
 
+    function limitSellWithDeadline(
+        address base,
+        address quote,
+        uint256 price,
+        uint256 baseAmount,
+        bool isMaker,
+        uint32 n,
+        address recipient,
+        uint64 deadline
+    ) external nonReentrant returns (OrderResult memory result) {
+        _checkDeadline(deadline);
+        orderDeadlineContext = deadline;
+        count = _nextHistoryId();
+        result = _limitSell(base, quote, price, baseAmount, isMaker, n, recipient, count);
+        orderDeadlineContext = 0;
+    }
+
     function _detLimitSellMakePrice(
         address orderbook,
         uint256 lp,
@@ -1161,38 +1235,8 @@ contract MatchingEngine is ReentrancyGuard, AccessControl, IMatchingEngine {
         uint256 askHead,
         uint32 spread
     ) internal view returns (uint256 price, uint256 lmp) {
-        uint256 down;
         lmp = IOrderbook(orderbook).lmp();
-        if (askHead == 0 && bidHead == 0) {
-            if (lmp != 0) {
-                down = (lmp * (DENOM - spread)) / DENOM;
-                return (lp <= down ? down : lp, lmp);
-            }
-            return (lp, lmp);
-        } else if (askHead == 0 && bidHead != 0) {
-            if (lmp != 0) {
-                down = (lmp * (DENOM - spread)) / DENOM;
-                down = lp <= down ? down : lp;
-                return (down <= bidHead ? bidHead : down, lmp);
-            }
-            down = (bidHead * (DENOM - spread)) / DENOM;
-            down = lp <= down ? down : lp;
-            return (down <= bidHead ? bidHead : down, lmp);
-        } else if (askHead != 0 && bidHead == 0) {
-            if (lmp != 0) {
-                down = (lmp * (DENOM - spread)) / DENOM;
-                return (lp <= down ? down : lp, lmp);
-            }
-            down = (askHead * (DENOM - spread)) / DENOM;
-            return (lp <= down ? down : lp, lmp);
-        } else {
-            if (lmp != 0) {
-                down = (lmp * (DENOM - spread)) / DENOM;
-                return (lp <= down ? down : lp, lmp);
-            }
-            // lower limit price on sell cannot be lower than bid head price
-            return (down <= bidHead ? bidHead : lp, lmp);
-        }
+        return (MarketMakePriceLib.limitSell(lmp, lp, bidHead, askHead, spread), lmp);
     }
 
     /**
@@ -1259,23 +1303,36 @@ contract MatchingEngine is ReentrancyGuard, AccessControl, IMatchingEngine {
             );
     }
 
-    /**
-     * @dev Creates an orderbook for a new trading pair and returns its address
-     * @param base The address of the base asset for the trading pair
-     * @param quote The address of the quote asset for the trading pair
-     * @param listingPrice The initial market price for the trading pair
-     * @param listingDate The listing Date for the trading pair
-     * @return book The address of the newly created orderbook
-     */
-    function addPairETH(
+    function limitBuyETHWithDeadline(
         address base,
-        address quote,
-        uint256 listingPrice,
-        uint256 listingDate,
-        ExchangeOrderbook.MatchingMode mode
-    ) external payable override returns (address book) {
+        uint256 price,
+        bool isMaker,
+        uint32 n,
+        address recipient,
+        uint64 deadline
+    ) external payable nonReentrant returns (OrderResult memory result) {
+        _checkDeadline(deadline);
+        orderDeadlineContext = deadline;
         IWETH(WETH).deposit{value: msg.value}();
-        return addPair(base, quote, listingPrice, listingDate, WETH, mode);
+        count = _nextHistoryId();
+        result = _limitBuy(base, WETH, price, msg.value, isMaker, n, recipient, count);
+        orderDeadlineContext = 0;
+    }
+
+    function limitSellETHWithDeadline(
+        address quote,
+        uint256 price,
+        bool isMaker,
+        uint32 n,
+        address recipient,
+        uint64 deadline
+    ) external payable nonReentrant returns (OrderResult memory result) {
+        _checkDeadline(deadline);
+        orderDeadlineContext = deadline;
+        IWETH(WETH).deposit{value: msg.value}();
+        count = _nextHistoryId();
+        result = _limitSell(WETH, quote, price, msg.value, isMaker, n, recipient, count);
+        orderDeadlineContext = 0;
     }
 
     /**
@@ -1294,11 +1351,18 @@ contract MatchingEngine is ReentrancyGuard, AccessControl, IMatchingEngine {
         address payment,
         ExchangeOrderbook.MatchingMode mode
     ) public override returns (address pair) {
-        string memory terminalName = _listingDeposit(payment, msg.sender);
+        // Pair creation is permissionless and protocol-fee-free. `payment` is
+        // retained in the ABI so existing integrations do not need a new call.
+        payment;
+        string memory terminalName = "permissionless";
 
         // create orderbook for the pair
         pair = IOrderbookFactory(orderbookFactory).createBook(base, quote, mode);
         IOrderbook(pair).setLmp(listingPrice);
+        if (stopOrderEngine != address(0)) {
+            IStopOrderEngine(stopOrderEngine).createBook(pair, base, quote);
+            IOrderbook(pair).setOperator(stopOrderEngine);
+        }
         // Skip Pool creation for a WETH-linked pair -- Orderbook._sendFunds unconditionally
         // unwraps WETH to native ETH on settlement, which Pool.swap's ERC20-balance-delta
         // accounting cannot observe, silently misreporting a filled WETH leg as amountOut=0
@@ -1326,6 +1390,7 @@ contract MatchingEngine is ReentrancyGuard, AccessControl, IMatchingEngine {
         );
         emit PairAdded(
             pair,
+            msg.sender,
             baseInfo,
             quoteInfo,
             listingPrice,
@@ -1615,6 +1680,26 @@ contract MatchingEngine is ReentrancyGuard, AccessControl, IMatchingEngine {
         return refunded;
     }
 
+    /// @notice Removes an expired resting order and refunds its remaining deposit.
+    /// Anyone may call this so stale liquidity can be cleared without relying on its owner.
+    function expireOrder(
+        address base,
+        address quote,
+        bool isBid,
+        uint32 orderId
+    ) external nonReentrant returns (uint256 refunded) {
+        address pair = getPair(base, quote);
+        if (pair == address(0)) revert PairDoesNotExist(base, quote, pair);
+        ExchangeOrderbook.Order memory order = IOrderbook(pair).getOrder(isBid, orderId);
+        if (order.deadline == 0 || block.timestamp <= order.deadline) {
+            revert OrderNotExpired(order.deadline, block.timestamp);
+        }
+        (address owner, uint256 amount, uint64 deadline) =
+            IOrderbook(pair).expireOrder(isBid, orderId);
+        emit OrderExpired(pair, orderId, owner, isBid, false, false, deadline, amount);
+        return amount;
+    }
+
     /**
      * @dev Returns an order in the ask/bid orderbook for the given trading pair with order id.
      * @param base The address of the base asset for the trading pair.
@@ -1638,17 +1723,45 @@ contract MatchingEngine is ReentrancyGuard, AccessControl, IMatchingEngine {
         address account,
         bool isMaker
     ) external view returns (uint32 feeNum) {
-        if (incentive == address(0x0)) {
-            return _dfltFee(isMaker);
-        } else {
-            try
-                IProtocol(incentive).feeOf(base, quote, account, isMaker)
-            returns (uint32 num) {
-                return num;
-            } catch {
-                return _dfltFee(isMaker);
-            }
+        address pair = IOrderbookFactory(orderbookFactory).getPair(base, quote);
+        PairFeePolicy memory policy = pairFeePolicy[pair];
+        uint32 pairFee = policy.configured
+            ? (isMaker ? policy.makerFee : policy.takerFee)
+            : _dfltFee(isMaker);
+        address incentive_ = incentive;
+        if (incentive_ == address(0)) return pairFee;
+
+        // OG Pass pricing is a discount, never a surcharge. The pair policy remains
+        // the ceiling for this exact market; an OG account receives the lower of the
+        // pair's maker/taker rate and its account-specific rate. A reverting or absent
+        // incentive simply leaves the pair fee unchanged.
+        try IProtocol(incentive_).feeOf(base, quote, account, isMaker) returns (uint32 accountFee) {
+            return accountFee < pairFee ? accountFee : pairFee;
+        } catch {
+            return pairFee;
         }
+    }
+
+    /// @dev AssetGenerator exposes its launch limit in basis points while the engine uses
+    /// DENOM-scaled numerators. A missing/reverting hook leaves ordinary pairs unchanged.
+    /// Traders may always submit a stricter limit; a looser one is capped by the creator's
+    /// policy for the exact generated pair.
+    function _pairSlippageLimit(address base, address quote, uint32 requested)
+        internal
+        view
+        returns (uint32)
+    {
+        address policy = incentive;
+        if (policy == address(0)) return requested;
+        (bool ok, bytes memory data) = policy.staticcall(
+            abi.encodeWithSignature("slippageLimitOf(address,address)", base, quote)
+        );
+        if (!ok || data.length < 32) return requested;
+        uint256 basisPoints = abi.decode(data, (uint256));
+        uint256 scaled = basisPoints * 10_000;
+        if (scaled > type(uint32).max) return requested;
+        uint32 cap = uint32(scaled);
+        return requested <= cap ? requested : cap;
     }
 
     /**
@@ -1767,13 +1880,15 @@ contract MatchingEngine is ReentrancyGuard, AccessControl, IMatchingEngine {
             (id, foundDmt) = IOrderbook(pair).placeBid(
                 recipient,
                 price,
-                withoutFee
+                withoutFee,
+                orderDeadlineContext
             );
         } else {
             (id, foundDmt) = IOrderbook(pair).placeAsk(
                 recipient,
                 price,
-                withoutFee
+                withoutFee,
+                orderDeadlineContext
             );
         }
         if (foundDmt) {
@@ -1790,6 +1905,12 @@ contract MatchingEngine is ReentrancyGuard, AccessControl, IMatchingEngine {
             );
         }
         return id;
+    }
+
+    function _checkDeadline(uint64 deadline) private view {
+        if (deadline != 0 && block.timestamp > deadline) {
+            revert DeadlineExpired(deadline, block.timestamp);
+        }
     }
 
     /**
@@ -1813,7 +1934,12 @@ contract MatchingEngine is ReentrancyGuard, AccessControl, IMatchingEngine {
         uint32 n,
         uint16 orderHistoryId
     ) internal returns (uint256 remaining, uint256 bidHead, uint256 askHead) {
-        return MatchingLib.limitOrder(pair, amount, give, recipient, isBid, limitPrice, n, orderHistoryId, maxMatches);
+        uint32 used;
+        MatchingLib.LimitOrderInput memory input = MatchingLib.LimitOrderInput(
+            pair, amount, give, recipient, isBid, limitPrice, n, orderHistoryId
+        );
+        (remaining, bidHead, askHead, used) = MatchingLib.limitOrder(input, maxMatches);
+        return StopOrderHandoffLib.handoff(stopOrderEngine, input, remaining, bidHead, askHead, used);
     }
 
     /**
@@ -1942,44 +2068,6 @@ contract MatchingEngine is ReentrancyGuard, AccessControl, IMatchingEngine {
         lmp = IOrderbook(pair).lmp();
 
         return (amount, pair, lmp);
-    }
-
-    /**
-     * @dev Deposit amount of asset to the contract with the given asset information and subtracts the fee.
-     * @param payment The address of the payment asset.
-     * @param sender The address of the sender.
-     */
-    function _listingDeposit(
-        address payment,
-        address sender
-    ) internal returns (string memory terminalName) {
-        // check if the sender is admin
-        if (hasRole(MARKET_MAKER_ROLE, sender)) {
-            return "iter";
-        }
-        // check if the sender is supported terminal, only terminals can list pairs
-        terminalName = IProtocol(incentive).terminalName(sender);
-        if (keccak256(bytes(terminalName)) == keccak256(bytes(""))) {
-            revert InvalidTerminal(msg.sender);
-        }
-        uint256 amount = IOrderbookFactory(orderbookFactory).getListingCost(
-            terminalName,
-            payment
-        );
-        // check if amount is zero
-        if (amount == 0) {
-            revert AmountIsZero();
-        }
-        if (payment != WETH) {
-            TransferHelper.safeTransferFrom(
-                payment,
-                msg.sender,
-                address(this),
-                amount
-            );
-        }
-        TransferHelper.safeTransfer(payment, feeTo, amount);
-        return terminalName;
     }
 
     function _dfltFee(bool isMaker) internal view returns (uint32) {

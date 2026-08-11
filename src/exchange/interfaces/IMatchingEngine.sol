@@ -67,6 +67,18 @@ interface IMatchingEngine {
         address recipient;
     }
 
+    struct StopMarketInput {
+        address base;
+        address quote;
+        bool isBid;
+        uint256 stopPrice;
+        uint256 amount;
+        uint32 n;
+        uint32 slippageLimit;
+        uint64 deadline;
+        address recipient;
+    }
+
     struct MatchAtInput {
         address pair;
         address give;
@@ -90,6 +102,12 @@ interface IMatchingEngine {
     function setFeeTo(address feeTo_) external returns (bool success);
 
     function setDefaultFee(bool isMaker, uint32 fee_) external returns (bool success);
+
+    function setPairFeeClass(address pair, uint8 feeClass, uint32 makerFee, uint32 takerFee)
+        external
+        returns (bool success);
+
+    function setFeeManager(address feeManager) external returns (bool success);
 
     function setPoolFeeShare(uint32 poolFeeShare_) external returns (bool success);
 
@@ -120,6 +138,11 @@ interface IMatchingEngine {
         uint32 slippageLimit
     ) external returns (OrderResult memory result);
 
+    function marketBuyWithDeadline(
+        address base, address quote, uint256 quoteAmount, bool isMaker, uint32 n,
+        address recipient, uint32 slippageLimit, uint64 deadline
+    ) external returns (OrderResult memory result);
+
     function marketSell(
         address base,
         address quote,
@@ -130,15 +153,28 @@ interface IMatchingEngine {
         uint32 slippageLimit
     ) external returns (OrderResult memory result);
 
+    function marketSellWithDeadline(
+        address base, address quote, uint256 baseAmount, bool isMaker, uint32 n,
+        address recipient, uint32 slippageLimit, uint64 deadline
+    ) external returns (OrderResult memory result);
+
     function marketBuyETH(address base, bool isMaker, uint32 n, address recipient, uint32 slippageLimit)
         external
         payable
         returns (OrderResult memory result);
 
+    function marketBuyETHWithDeadline(
+        address base, bool isMaker, uint32 n, address recipient, uint32 slippageLimit, uint64 deadline
+    ) external payable returns (OrderResult memory result);
+
     function marketSellETH(address quote, bool isMaker, uint32 n, address recipient, uint32 slippageLimit)
         external
         payable
         returns (OrderResult memory result);
+
+    function marketSellETHWithDeadline(
+        address quote, bool isMaker, uint32 n, address recipient, uint32 slippageLimit, uint64 deadline
+    ) external payable returns (OrderResult memory result);
 
     function limitBuy(
         address base,
@@ -148,6 +184,11 @@ interface IMatchingEngine {
         bool isMaker,
         uint32 n,
         address recipient
+    ) external returns (OrderResult memory result);
+
+    function limitBuyWithDeadline(
+        address base, address quote, uint256 price, uint256 quoteAmount, bool isMaker,
+        uint32 n, address recipient, uint64 deadline
     ) external returns (OrderResult memory result);
 
     function limitSell(
@@ -160,15 +201,28 @@ interface IMatchingEngine {
         address recipient
     ) external returns (OrderResult memory result);
 
+    function limitSellWithDeadline(
+        address base, address quote, uint256 price, uint256 baseAmount, bool isMaker,
+        uint32 n, address recipient, uint64 deadline
+    ) external returns (OrderResult memory result);
+
     function limitBuyETH(address base, uint256 price, bool isMaker, uint32 n, address recipient)
         external
         payable
         returns (OrderResult memory result);
 
+    function limitBuyETHWithDeadline(
+        address base, uint256 price, bool isMaker, uint32 n, address recipient, uint64 deadline
+    ) external payable returns (OrderResult memory result);
+
     function limitSellETH(address quote, uint256 price, bool isMaker, uint32 n, address recipient)
         external
         payable
         returns (OrderResult memory result);
+
+    function limitSellETHWithDeadline(
+        address quote, uint256 price, bool isMaker, uint32 n, address recipient, uint64 deadline
+    ) external payable returns (OrderResult memory result);
 
     function addPair(
         address base,
@@ -178,14 +232,6 @@ interface IMatchingEngine {
         address payment,
         ExchangeOrderbook.MatchingMode mode
     ) external returns (address pair);
-
-    function addPairETH(
-        address base,
-        address quote,
-        uint256 listingPrice,
-        uint256 listingDate,
-        ExchangeOrderbook.MatchingMode mode
-    ) external payable returns (address book);
 
     function createOrder(CreateOrderInput memory createOrderData)
         external
@@ -198,7 +244,12 @@ interface IMatchingEngine {
 
     function cancelOrder(address base, address quote, bool isBid, uint32 orderId) external returns (uint256 refunded);
 
+    function expireOrder(address base, address quote, bool isBid, uint32 orderId)
+        external returns (uint256 refunded);
+
     function cancelOrders(CancelOrderInput[] memory cancelOrders) external returns (uint256[] memory refunded);
+
+    function setStopOrderEngine(address stopOrderEngine_) external;
 
     function getOrder(address base, address quote, bool isBid, uint32 orderId)
         external

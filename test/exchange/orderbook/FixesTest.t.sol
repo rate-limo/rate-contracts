@@ -125,7 +125,8 @@ contract FixesTest is BaseSetup {
 
         // Trigger fpop from the engine — remaining is large (taker has more than enough)
         vm.prank(address(matchingEngine));
-        (uint32 retId, uint256 retRequired, bool retClear, , ) = book.fpop(false, 1, type(uint256).max);
+        (uint32 retId, uint256 retRequired, bool retClear, , , , ) =
+            book.fpop(false, 1, type(uint256).max);
 
         // Fix 2 originally flattened the id to 0 to keep `execute` from being called on
         // a deleted order. That property now comes from `required == 0` instead —

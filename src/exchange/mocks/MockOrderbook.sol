@@ -49,6 +49,7 @@ contract MockOrderbook is IOrderbook, Initializable {
 
     Oracle.Observation[ORACLE_CARDINALITY] private observations;
     uint16 private observationIndex;
+    address private operator;
 
     error InvalidDecimals(uint8 base, uint8 quote);
     error InvalidAccess(address sender, address allowed);
@@ -87,10 +88,19 @@ contract MockOrderbook is IOrderbook, Initializable {
     }
 
     modifier onlyEngine() {
-        if (msg.sender != pair.engine) {
+        if (msg.sender != pair.engine && msg.sender != operator) {
             revert InvalidAccess(msg.sender, pair.engine);
         }
         _;
+    }
+
+    function setOperator(address operator_) external {
+        if (msg.sender != pair.engine) revert InvalidAccess(msg.sender, pair.engine);
+        operator = operator_;
+    }
+
+    function getOperator() external view returns (address) {
+        return operator;
     }
 
     function setOrderCount(bool isBid, uint32 count) external {
@@ -135,13 +145,22 @@ contract MockOrderbook is IOrderbook, Initializable {
     ) external onlyEngine returns (uint32 id, bool foundDmt) {
         // clear empty head
         clearEmptyHead(false);
-        (id, foundDmt) = _askOrders._createOrder(owner, price, amount);
+        (id, foundDmt) = _askOrders._createOrder(owner, price, amount, 0);
         // check if the price is new in the list. if not, insert id to the list
         if (_askOrders._isEmpty(price)) {
             priceLists._insert(false, price);
         }
         _askOrders._insertId(price, id);
         return (id, foundDmt);
+    }
+
+    function placeAsk(address owner, uint256 price, uint256 amount, uint64 deadline)
+        external onlyEngine returns (uint32 id, bool foundDmt)
+    {
+        clearEmptyHead(false);
+        (id, foundDmt) = _askOrders._createOrder(owner, price, amount, deadline);
+        if (_askOrders._isEmpty(price)) priceLists._insert(false, price);
+        _askOrders._insertId(price, id);
     }
 
     function placeBid(
@@ -151,13 +170,22 @@ contract MockOrderbook is IOrderbook, Initializable {
     ) external onlyEngine returns (uint32 id, bool foundDmt) {
         // clear empty head
         clearEmptyHead(true);
-        (id, foundDmt) = _bidOrders._createOrder(owner, price, amount);
+        (id, foundDmt) = _bidOrders._createOrder(owner, price, amount, 0);
         // check if the price is new in the list. if not, insert id to the list
         if (_bidOrders._isEmpty(price)) {
             priceLists._insert(true, price);
         }
         _bidOrders._insertId(price, id);
         return (id, foundDmt);
+    }
+
+    function placeBid(address owner, uint256 price, uint256 amount, uint64 deadline)
+        external onlyEngine returns (uint32 id, bool foundDmt)
+    {
+        clearEmptyHead(true);
+        (id, foundDmt) = _bidOrders._createOrder(owner, price, amount, deadline);
+        if (_bidOrders._isEmpty(price)) priceLists._insert(true, price);
+        _bidOrders._insertId(price, id);
     }
 
     function removeDmt(
@@ -331,12 +359,20 @@ contract MockOrderbook is IOrderbook, Initializable {
     )
         external
         onlyEngine
-        returns (uint32 orderId, uint256 required, bool clear, address dustOwner, uint256 dustRefund)
+        returns (
+            uint32 orderId, uint256 required, bool clear, address removedOwner,
+            uint256 removedRefund, bool expired, uint64 removedDeadline
+        )
     {
         orderId = isBid ? _bidOrders._head(price) : _askOrders._head(price);
         ExchangeOrderbook.Order memory order = isBid
             ? _bidOrders._getOrder(orderId)
             : _askOrders._getOrder(orderId);
+        if (order.deadline != 0 && block.timestamp > order.deadline) {
+            isBid ? _bidOrders._deleteOrder(orderId) : _askOrders._deleteOrder(orderId);
+            _sendFunds(isBid ? pair.quote : pair.base, order.owner, order.depositAmount, false, false);
+            return (orderId, 0, true, order.owner, order.depositAmount, true, order.deadline);
+        }
         required = convert(price, order.depositAmount, !isBid);
         if (required <= remaining) {
             isBid ? _bidOrders._fpop(price) : _askOrders._fpop(price);
@@ -345,9 +381,20 @@ contract MockOrderbook is IOrderbook, Initializable {
                     ? priceLists.bidHead = priceLists._next(isBid, price)
                     : priceLists.askHead = priceLists._next(isBid, price);
             }
-            return (orderId, required, true, address(0), 0); // clear order as required <=remaining
+            return (orderId, required, true, address(0), 0, false, 0); // clear order as required <=remaining
         }
-        return (orderId, required, false, address(0), 0);
+        return (orderId, required, false, address(0), 0, false, 0);
+    }
+
+    function expireOrder(bool isBid, uint32 orderId)
+        external onlyEngine returns (address owner, uint256 refunded, uint64 deadline)
+    {
+        ExchangeOrderbook.Order memory order = isBid
+            ? _bidOrders._getOrder(orderId)
+            : _askOrders._getOrder(orderId);
+        isBid ? _bidOrders._deleteOrder(orderId) : _askOrders._deleteOrder(orderId);
+        _sendFunds(isBid ? pair.quote : pair.base, order.owner, order.depositAmount, false, false);
+        return (order.owner, order.depositAmount, order.deadline);
     }
 
     function _sendFunds(

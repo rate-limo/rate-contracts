@@ -45,6 +45,38 @@ contract MockMembership {
     }
 }
 
+contract MockOGPass {
+    error Boom();
+
+    mapping(address => uint256) private _balances;
+    uint32 public makerFee;
+    uint32 public takerFee;
+    bool public shouldRevert;
+
+    function setBalance(address account, uint256 balance) external {
+        _balances[account] = balance;
+    }
+
+    function setLadder(uint32 maker, uint32 taker) external {
+        makerFee = maker;
+        takerFee = taker;
+    }
+
+    function setShouldRevert(bool value) external {
+        shouldRevert = value;
+    }
+
+    function balanceOf(address account) external view returns (uint256) {
+        if (shouldRevert) revert Boom();
+        return _balances[account];
+    }
+
+    function feeOf(address, bool isMaker) external view returns (uint32) {
+        if (shouldRevert) revert Boom();
+        return isMaker ? makerFee : takerFee;
+    }
+}
+
 /**
  * @notice A byte-for-byte copy of `MatchingEngine.feeOf`'s dispatch, so these tests
  * exercise the real fallback contract rather than an assumption about it. Kept in sync
@@ -91,6 +123,7 @@ contract OldStubIncentive {
 contract IncentiveTest is Test {
     Incentive internal incentive;
     MockMembership internal membership;
+    MockOGPass internal ogPass;
     EngineFallbackHarness internal engine;
 
     address internal admin = makeAddr("admin");
@@ -105,6 +138,7 @@ contract IncentiveTest is Test {
     function setUp() public {
         incentive = new Incentive(admin);
         membership = new MockMembership();
+        ogPass = new MockOGPass();
         engine = new EngineFallbackHarness(DEFAULT_MAKER, DEFAULT_TAKER);
         engine.setIncentive(address(incentive));
     }
@@ -181,10 +215,11 @@ contract IncentiveTest is Test {
     /* -------------------------------- membership ------------------------------- */
 
     function _useMembership(uint32 maker, uint32 taker) internal {
-        membership.setLadder(maker, taker);
+        ogPass.setLadder(maker, taker);
         membership.setSubscribed(trader, true);
+        ogPass.setBalance(trader, 1);
         vm.prank(admin);
-        incentive.setMembership(address(membership));
+        incentive.setOGPass(address(ogPass));
     }
 
     /**
@@ -192,46 +227,57 @@ contract IncentiveTest is Test {
      * against 1e6 (`// 1% / 1%` above `return 10000`) while the engine's DENOM is 1e8.
      * Forwarding it unscaled would charge 0.01% where the ladder says 1%.
      */
-    function test_membershipLadder_isRescaledOntoTheEngineDenominator() public {
-        _useMembership(7_500, 10_000); // ladder: 0.75% maker, 1.00% taker
-
-        assertEq(incentive.feeOf(address(1), address(2), trader, true), 750_000, "0.75% of 1e8");
-        assertEq(incentive.feeOf(address(1), address(2), trader, false), 1_000_000, "1.00% of 1e8");
-    }
-
-    function test_membershipLadder_needsNoRescaleOnceRestatedOn1e8() public {
+    function test_ogPassFeePolicy_isReturnedOnTheEngineDenominator() public {
         _useMembership(750_000, 1_000_000);
-        // Read DENOM before pranking: a call inside the argument consumes the prank.
-        uint32 denom = incentive.DENOM();
-        vm.prank(admin);
-        incentive.setMembershipFeeDenom(denom);
 
+        assertEq(incentive.feeOf(address(1), address(2), trader, true), 750_000);
         assertEq(incentive.feeOf(address(1), address(2), trader, false), 1_000_000);
     }
 
     function test_feeOf_declinesForAnUnsubscribedAccount() public {
         _useMembership(7_500, 10_000);
-        membership.setSubscribed(trader, false);
+        ogPass.setBalance(trader, 0);
 
         vm.expectRevert(abi.encodeWithSelector(Incentive.NoFeeOpinion.selector, trader));
         incentive.feeOf(address(1), address(2), trader, false);
         assertEq(engine.feeOf(address(1), address(2), trader, false), DEFAULT_TAKER);
     }
 
+    function test_feeOf_declinesForSubscribedAccountWithoutOGPass() public {
+        _useMembership(7_500, 10_000);
+        ogPass.setBalance(trader, 0);
+
+        vm.expectRevert(abi.encodeWithSelector(Incentive.NoFeeOpinion.selector, trader));
+        incentive.feeOf(address(1), address(2), trader, false);
+        assertEq(engine.feeOf(address(1), address(2), trader, false), DEFAULT_TAKER);
+    }
+
+    function test_feeOf_stopsDiscountAfterOGPassLeavesWallet() public {
+        _useMembership(7_500, 10_000);
+        assertEq(incentive.feeOf(address(1), address(2), trader, true), 7_500);
+
+        ogPass.setBalance(trader, 0);
+        assertEq(engine.feeOf(address(1), address(2), trader, false), DEFAULT_TAKER);
+    }
+
+    function test_feeOf_declinesWhenOGPassOwnershipCallFails() public {
+        _useMembership(7_500, 10_000);
+        ogPass.setShouldRevert(true);
+
+        assertFalse(incentive.isOGPassHolder(trader));
+        assertEq(engine.feeOf(address(1), address(2), trader, false), DEFAULT_TAKER);
+    }
+
     /// A membership contract that reverts must not become a zero fee.
-    function test_feeOf_declinesWhenTheMembershipCallFails() public {
+    function test_feeOf_declinesWhenTheOGPassFeeCallFails() public {
         _useMembership(7_500, 10_000);
 
-        membership.setRevertOnSubscribed(true);
-        assertEq(engine.feeOf(address(1), address(2), trader, false), DEFAULT_TAKER, "isSubscribed reverted");
-
-        membership.setRevertOnSubscribed(false);
-        membership.setRevertOnFee(true);
+        ogPass.setShouldRevert(true);
         assertEq(engine.feeOf(address(1), address(2), trader, false), DEFAULT_TAKER, "feeOf reverted");
     }
 
     function test_feeOf_declinesWhenTheRescaledFeeExceedsTheDenominator() public {
-        _useMembership(0, 2_000_000); // 200% once rescaled
+        _useMembership(0, 200_000_000);
 
         vm.expectRevert(abi.encodeWithSelector(Incentive.InvalidFee.selector, uint256(200_000_000)));
         incentive.feeOf(address(1), address(2), trader, false);
@@ -248,16 +294,16 @@ contract IncentiveTest is Test {
 
     /* ------------------------------- subscriptions ----------------------------- */
 
-    function test_isSubscribed_isFalseWithoutAMembershipContract() public view {
+    function test_isSubscribed_isFalseWithoutAnOGPassContract() public view {
         assertFalse(incentive.isSubscribed(trader));
     }
 
-    function test_isSubscribed_delegatesAndSwallowsFailures() public {
+    function test_isSubscribed_delegatesToOGPassAndSwallowsFailures() public {
         _useMembership(7_500, 10_000);
         assertTrue(incentive.isSubscribed(trader));
         assertFalse(incentive.isSubscribed(stranger));
 
-        membership.setRevertOnSubscribed(true);
+        ogPass.setShouldRevert(true);
         assertFalse(incentive.isSubscribed(trader), "a failing membership is not a subscription");
     }
 
@@ -289,13 +335,13 @@ contract IncentiveTest is Test {
         new Incentive(address(0));
     }
 
-    function test_setMembership_revertsForNonAdmin() public {
+    function test_setOGPass_revertsForNonAdmin() public {
         bytes32 role = incentive.ADMIN_ROLE();
         vm.prank(stranger);
         vm.expectRevert(
             abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, stranger, role)
         );
-        incentive.setMembership(address(membership));
+        incentive.setOGPass(address(ogPass));
     }
 
     function test_setFeeOverride_revertsForNonAdmin() public {
@@ -310,9 +356,4 @@ contract IncentiveTest is Test {
         incentive.setTerminalName(stranger, "self-serve");
     }
 
-    function test_setMembershipFeeDenom_rejectsZero() public {
-        vm.prank(admin);
-        vm.expectRevert(abi.encodeWithSelector(Incentive.InvalidFee.selector, uint256(0)));
-        incentive.setMembershipFeeDenom(0);
-    }
 }
