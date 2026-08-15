@@ -429,9 +429,29 @@ contract Pool is IPool, Initializable {
         TransferHelper.safeApprove(ctx.inputToken, engine, remainingIn);
         uint256 bound = ctx.tierBounds[ctx.tierBounds.length - 1];
         if (quoteToBase) {
-            IMatchingEngine(engine).limitBuy(base, quote, bound, remainingIn, true, MAX_POSITIONS_PER_SWAP, recipient);
+            IMatchingEngine(engine).limitBuy(
+                IMatchingEngine.LimitOrderInput({
+                    base: base,
+                    quote: quote,
+                    price: bound,
+                    amount: remainingIn,
+                    isMaker: true,
+                    n: MAX_POSITIONS_PER_SWAP,
+                    recipient: recipient
+                })
+            );
         } else {
-            IMatchingEngine(engine).limitSell(base, quote, bound, remainingIn, true, MAX_POSITIONS_PER_SWAP, recipient);
+            IMatchingEngine(engine).limitSell(
+                IMatchingEngine.LimitOrderInput({
+                    base: base,
+                    quote: quote,
+                    price: bound,
+                    amount: remainingIn,
+                    isMaker: true,
+                    n: MAX_POSITIONS_PER_SWAP,
+                    recipient: recipient
+                })
+            );
         }
         return 0;
     }

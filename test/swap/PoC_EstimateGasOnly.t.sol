@@ -88,7 +88,16 @@ contract PoCEstimateGasOnly is PoolBaseSetup {
     function _routerSwapGas() internal returns (uint256 gasUsed) {
         uint256 g0 = gasleft();
         vm.prank(trader1);
-        router.swap(_swapPath(), 1e18, 0, trader1, ISwapRouter.RemainderMode.Refund, empty);
+        router.swap(
+            ISwapRouter.SwapInput({
+                path: _swapPath(),
+                amountIn: 1e18,
+                minAmountOut: 0,
+                recipient: trader1,
+                remainderMode: ISwapRouter.RemainderMode.Refund,
+                remainderConfig: empty
+            })
+        );
         gasUsed = g0 - gasleft();
     }
 
@@ -121,14 +130,23 @@ contract PoCEstimateGasOnly is PoolBaseSetup {
     function test_PoC_revertCarriesNoReturnDataAtAll() public {
         _spamFreePositions(4000);
 
-        bytes memory callData = abi.encodeWithSelector(
-            SwapRouter.swap.selector,
-            _swapPath(),
-            uint256(1e18),
-            uint256(0),
-            trader1,
-            ISwapRouter.RemainderMode.Refund,
-            empty
+        // encodeCall, not encodeWithSelector, and the distinction is load-bearing HERE in a
+        // way it is not everywhere: this test asserts that the revert carries zero bytes of
+        // return data. Calldata the router cannot decode also reverts with zero bytes, so
+        // hand-encoded positional arguments would keep this test green while testing
+        // nothing at all. encodeCall makes the compiler check the shape.
+        bytes memory callData = abi.encodeCall(
+            ISwapRouter.swap,
+            (
+                ISwapRouter.SwapInput({
+                    path: _swapPath(),
+                    amountIn: uint256(1e18),
+                    minAmountOut: uint256(0),
+                    recipient: trader1,
+                    remainderMode: ISwapRouter.RemainderMode.Refund,
+                    remainderConfig: empty
+                })
+            )
         );
 
         // ~7.4M is what this swap now needs (366k base + 4000 x 1,765). A wallet that

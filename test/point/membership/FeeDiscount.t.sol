@@ -1,4 +1,5 @@
 import {PointFarmSetup} from "../PointFarmSetup.sol";
+import {IMatchingEngine} from "../../../src/exchange/interfaces/IMatchingEngine.sol";
 
 contract FeeDiscountTest is PointFarmSetup {
     function fSetUp() internal {
@@ -15,7 +16,17 @@ contract FeeDiscountTest is PointFarmSetup {
     function testSubscribingGetsExtraFeeDiscount() public {
         fSetUp();
         vm.startPrank(trader1);
-        matchingEngine.limitBuy(address(feeToken), address(stablecoin), 1000e8, 100e18, true, 2, address(trader1));
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(feeToken),
+                quote: address(stablecoin),
+                price: 1000e8,
+                amount: 100e18,
+                isMaker: true,
+                n: 2,
+                recipient: address(trader1)
+            })
+        );
         assert(pointFarm.feeOf(address(trader1), true) == 5000);
     }
 
@@ -33,7 +44,17 @@ contract FeeDiscountTest is PointFarmSetup {
         fSetUp();
         vm.startPrank(trader1);
         pointFarm.unsubscribe(1);
-        matchingEngine.limitBuy(address(feeToken), address(stablecoin), 1000e8, 100e18, true, 2, address(trader1));
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(feeToken),
+                quote: address(stablecoin),
+                price: 1000e8,
+                amount: 100e18,
+                isMaker: true,
+                n: 2,
+                recipient: address(trader1)
+            })
+        );
         assert(pointFarm.feeOf(address(trader1), true) == 10000);
     }
 }

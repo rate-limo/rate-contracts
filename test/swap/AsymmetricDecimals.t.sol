@@ -78,12 +78,14 @@ contract AsymmetricDecimalsTest is PoolBaseSetup {
         vm.startPrank(trader1);
         quoteToken.approve(address(router), amountIn);
         out = router.swap(
-            _path(address(quoteToken), address(baseToken)),
-            amountIn,
-            0,
-            trader1,
-            ISwapRouter.RemainderMode.Refund,
-            empty
+            ISwapRouter.SwapInput({
+                path: _path(address(quoteToken), address(baseToken)),
+                amountIn: amountIn,
+                minAmountOut: 0,
+                recipient: trader1,
+                remainderMode: ISwapRouter.RemainderMode.Refund,
+                remainderConfig: empty
+            })
         );
         vm.stopPrank();
     }
@@ -92,12 +94,14 @@ contract AsymmetricDecimalsTest is PoolBaseSetup {
         vm.startPrank(trader1);
         baseToken.approve(address(router), amountIn);
         out = router.swap(
-            _path(address(baseToken), address(quoteToken)),
-            amountIn,
-            0,
-            trader1,
-            ISwapRouter.RemainderMode.Refund,
-            empty
+            ISwapRouter.SwapInput({
+                path: _path(address(baseToken), address(quoteToken)),
+                amountIn: amountIn,
+                minAmountOut: 0,
+                recipient: trader1,
+                remainderMode: ISwapRouter.RemainderMode.Refund,
+                remainderConfig: empty
+            })
         );
         vm.stopPrank();
     }

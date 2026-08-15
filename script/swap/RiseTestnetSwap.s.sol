@@ -27,17 +27,22 @@ import {SwapRouter} from "../../src/swap/SwapRouter.sol";
 /// This mirrors the order test/swap/PoolBaseSetup.sol and Router.t.sol establish.
 contract DeploySwapSystem is Script {
     // Set to the MatchingEngine already deployed on the target chain.
-    address constant MATCHING_ENGINE = address(0);
+    /// Read from the environment rather than edited into the source before each
+    /// run. A constant meant the file had to be modified to deploy, which is a
+    /// diff nobody wants to commit and an edit easy to forget — and forgetting it
+    /// failed with a require, after compilation, rather than at the call site.
+    function matchingEngineAddress() internal view returns (address) {
+        return vm.envAddress("MATCHING_ENGINE");
+    }
 
     string constant POSITION_URI = "ipfs://iter-position/{id}.json";
 
     function run() external {
-        require(MATCHING_ENGINE != address(0), "set MATCHING_ENGINE to the deployed engine first");
 
         uint256 deployerKey = vm.envUint("RISE_TESTNET_DEPLOYER_KEY");
         vm.startBroadcast(deployerKey);
 
-        MatchingEngine engine = MatchingEngine(payable(MATCHING_ENGINE));
+        MatchingEngine engine = MatchingEngine(payable(matchingEngineAddress()));
 
         // 1. Factory first -- initialize() deploys the Pool implementation clones point at.
         PoolFactory poolFactory = new PoolFactory();
@@ -71,13 +76,19 @@ contract DeploySwapSystem is Script {
 /// liquidity or user funds arrive -- in particular that swapRouter is set, which is the one
 /// failure that is invisible until someone tries to trade.
 contract VerifySwapWiring is Script {
-    address constant MATCHING_ENGINE = address(0);
+    /// Read from the environment rather than edited into the source before each
+    /// run. A constant meant the file had to be modified to deploy, which is a
+    /// diff nobody wants to commit and an edit easy to forget — and forgetting it
+    /// failed with a require, after compilation, rather than at the call site.
+    function matchingEngineAddress() internal view returns (address) {
+        return vm.envAddress("MATCHING_ENGINE");
+    }
     address constant POOL_FACTORY = address(0);
     address constant POSITION_MANAGER = address(0);
     address constant SWAP_ROUTER = address(0);
 
     function run() external view {
-        MatchingEngine engine = MatchingEngine(payable(MATCHING_ENGINE));
+        MatchingEngine engine = MatchingEngine(payable(matchingEngineAddress()));
         PoolFactory factory = PoolFactory(POOL_FACTORY);
         PositionManager pm = PositionManager(POSITION_MANAGER);
 

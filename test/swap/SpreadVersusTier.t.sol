@@ -35,7 +35,16 @@ contract SpreadVersusTierTest is PoolBaseSetup {
         matchingEngine.setSpread(address(token1), address(token2), 100000, 100000, true); // 0.1%
         vm.startPrank(trader1);
         token2.approve(address(router), 100e18);
-        uint256 out = router.swap(_p(address(token2),address(token1)),100e18,0,trader1,ISwapRouter.RemainderMode.Refund,empty);
+        uint256 out = router.swap(
+            ISwapRouter.SwapInput({
+                path: _p(address(token2),address(token1)),
+                amountIn: 100e18,
+                minAmountOut: 0,
+                recipient: trader1,
+                remainderMode: ISwapRouter.RemainderMode.Refund,
+                remainderConfig: empty
+            })
+        );
         vm.stopPrank();
 
         uint256 impliedFill = (100e18 * 1e8) / out;   // what the swapper actually paid

@@ -3,6 +3,7 @@ pragma solidity >=0.8;
 
 import {PoolBaseSetup} from "./PoolBaseSetup.sol";
 import {console2} from "forge-std/console2.sol";
+import {IMatchingEngine} from "../../src/exchange/interfaces/IMatchingEngine.sol";
 
 // TEMPORARY measurement harness: the third architecture -- no pool involvement at all.
 // N maker orders rest on the book at N distinct prices (their ~212k-each placement gas is
@@ -17,7 +18,17 @@ contract GasTakerOnlyTest is PoolBaseSetup {
         for (uint256 i = 0; i < n; i++) {
             topPrice = (100e8 * (1e8 + 400000 + i * 400000)) / 1e8;
             vm.prank(trader2);
-            matchingEngine.limitSell(address(token1), address(token2), topPrice, 2e18, true, 1, trader2);
+            matchingEngine.limitSell(
+                IMatchingEngine.LimitOrderInput({
+                    base: address(token1),
+                    quote: address(token2),
+                    price: topPrice,
+                    amount: 2e18,
+                    isMaker: true,
+                    n: 1,
+                    recipient: trader2
+                })
+            );
         }
         uint256 amountIn = 190e18 * n;
         uint256 baseBefore = token1.balanceOf(trader1);
@@ -26,7 +37,15 @@ contract GasTakerOnlyTest is PoolBaseSetup {
         // Match cap = n exactly: the engine rejects >20 (TooManyMatches), and amountIn
         // undershoots total depth so the Nth fill is partial -- n matches always suffice.
         matchingEngine.limitBuy(
-            address(token1), address(token2), topPrice, amountIn, false, uint32(n), trader1
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: topPrice,
+                amount: amountIn,
+                isMaker: false,
+                n: uint32(n),
+                recipient: trader1
+            })
         );
         uint256 used = g0 - gasleft();
         require(token1.balanceOf(trader1) > baseBefore, "no fill");

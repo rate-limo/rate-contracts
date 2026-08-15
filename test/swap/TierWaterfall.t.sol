@@ -3,6 +3,7 @@ pragma solidity >=0.8;
 
 import {PoolBaseSetup} from "./PoolBaseSetup.sol";
 import {IPool} from "../../src/swap/interfaces/IPool.sol";
+import {IMatchingEngine} from "../../src/exchange/interfaces/IMatchingEngine.sol";
 
 // Covers the tiered LP-leg mechanics: per-tier execution bounds (a position's fill terms
 // are its OWN quoted tolerance), the within-tier waterfall by age (the paper's §4.6 JIT
@@ -107,7 +108,17 @@ contract TierWaterfallTest is PoolBaseSetup {
         // than the LP tier's 105e8 bound. Under engine routing the LP leg crossed it;
         // under direct settlement it must remain untouched.
         vm.prank(trader2);
-        matchingEngine.limitBuy(address(token1), address(token2), 107e8, 535e18, true, 20, trader2);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 107e8,
+                amount: 535e18,
+                isMaker: true,
+                n: 20,
+                recipient: trader2
+            })
+        );
         (uint256 bidHeadBefore,) = matchingEngine.heads(address(token1), address(token2));
 
         uint256 poolQuoteBefore = token2.balanceOf(address(pool));

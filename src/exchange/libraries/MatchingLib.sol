@@ -29,6 +29,22 @@ library MatchingLib {
 
     event NewMarketPrice(address pair, uint256 price, bool isBid);
 
+    /// @notice Mirrored from MatchingEngine for the same reason as the events above:
+    /// this is a delegatecall, so the log carries the engine's address, but an event
+    /// declared only here would be absent from the engine's ABI and an indexer
+    /// watching that address could not decode it.
+    /// Declaration must stay IDENTICAL to MatchingEngine's, `indexed` included. Dropping
+    /// it does not change topic0 -- the signature string ignores indexing -- so the event
+    /// still looks right by name while landing its pair in data instead of a topic, and
+    /// every expectEmit and every indexer filter on it silently stops matching.
+    event SwapPriceReport(
+        address indexed pair,
+        uint256 lmpBefore,
+        uint256 reported,
+        uint256 lmpAfter,
+        bool isBuy
+    );
+
     /// @notice An order was evicted from the book and its deposit refunded, because
     /// what remained converted to zero in the taker's asset and could never fill.
     /// Distinct from OrderCanceled on purpose -- the maker did not ask for this, and
@@ -217,5 +233,52 @@ library MatchingLib {
             emit NewMarketPrice(input.pair, state.lmp, input.isBid);
         }
         return (remaining, bidHead, askHead, state.i);
+    }
+
+    /**
+     * @notice Applies the block-open price rail to a swap-reported price and writes it.
+     * @dev Moved out of MatchingEngine.reportSwap purely for EIP-170 headroom -- the
+     * engine sits a few hundred bytes under the 24,576 limit. Behaviour is unchanged:
+     * this is a delegatecall, so `pair` still sees the engine as its caller and the
+     * logs still carry the engine's address.
+     *
+     * The rail is applied in BOTH directions regardless of which way the swap traded.
+     * A swap's own side says which way it *intends* to push the price; it does not
+     * license an unbounded move the other way. Bounding only the trade's own direction
+     * left the opposite direction completely unconstrained -- a buy could write the
+     * price arbitrarily far DOWN, and a spread of zero, the strongest circuit breaker
+     * the system can express, did not prevent it.
+     *
+     * Anchored to the price the pair opened this block at rather than to the live lmp:
+     * the rail is applied per report, so N reports in one transaction would otherwise
+     * each get a fresh cap measured against their predecessor's write and compound
+     * straight past it. Anchoring bounds the block as a whole, and the cap re-arms
+     * next block so honest sustained flow is not frozen out.
+     */
+    function reportSwapPrice(
+        address pair,
+        uint256 matchedPrice,
+        bool isBuy,
+        uint32 up,
+        uint32 down,
+        uint32 denom
+    ) public {
+        uint256 lmp = IOrderbook(pair).lmp();
+        if (lmp == 0 || matchedPrice == 0) return;
+
+        uint256 newLmp = matchedPrice;
+        uint256 anchor = IOrderbook(pair).lmpAtBlockOpen();
+        uint256 ceiling = (anchor * (denom + uint256(up))) / denom;
+        // A spread of 100%+ means "no lower bound"; taking denom - down there would
+        // underflow and revert the whole swap. Elsewhere that config already bricks limit
+        // orders, but a rail must never be the thing that fails a settled trade.
+        uint256 floor = down >= denom ? 0 : (anchor * (denom - uint256(down))) / denom;
+        if (newLmp > ceiling) newLmp = ceiling;
+        if (newLmp < floor) newLmp = floor;
+        if (newLmp == 0 || newLmp == lmp) return;
+
+        IOrderbook(pair).setLmp(newLmp);
+        emit NewMarketPrice(pair, newLmp, isBuy);
+        emit SwapPriceReport(pair, lmp, matchedPrice, newLmp, isBuy);
     }
 }

@@ -6,6 +6,7 @@ import {Orderbook} from "../../../src/exchange/orderbooks/Orderbook.sol";
 import {ExchangeOrderbook} from "../../../src/exchange/libraries/ExchangeOrderbook.sol";
 import {MatchingEngine} from "../../../src/exchange/MatchingEngine.sol";
 import {console} from "forge-std/console.sol";
+import {IMatchingEngine} from "../../../src/exchange/interfaces/IMatchingEngine.sol";
 
 /// Regression for the unbounded order-queue jam.
 ///
@@ -42,7 +43,15 @@ contract UnboundedOrderQueueRegression is BaseSetup {
         for (uint256 i = 0; i < count; i++) {
             vm.prank(trader1);
             matchingEngine.limitSell(
-                address(token1), address(token2), PRICE, startAmount - i * 1e6, true, 2, trader1
+                IMatchingEngine.LimitOrderInput({
+                    base: address(token1),
+                    quote: address(token2),
+                    price: PRICE,
+                    amount: startAmount - i * 1e6,
+                    isMaker: true,
+                    n: 2,
+                    recipient: trader1
+                })
             );
         }
     }
@@ -53,14 +62,34 @@ contract UnboundedOrderQueueRegression is BaseSetup {
 
         uint256 g0 = gasleft();
         vm.prank(trader1);
-        matchingEngine.limitSell(address(token1), address(token2), PRICE, 1e18, true, 2, trader1);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: PRICE,
+                amount: 1e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
         uint256 shallow = g0 - gasleft();
 
         _stackAsks(400, 900e18);
 
         g0 = gasleft();
         vm.prank(trader1);
-        matchingEngine.limitSell(address(token1), address(token2), PRICE, 1e17, true, 2, trader1);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: PRICE,
+                amount: 1e17,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
         uint256 deep = g0 - gasleft();
 
         console.log("limitSell gas, ~2 resting orders  :", shallow);

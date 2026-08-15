@@ -42,7 +42,17 @@ contract PoCUpdateOrdersValueReplay is BaseSetup {
         for (uint256 i = 0; i < 3; i++) {
             vm.prank(trader1);
             IMatchingEngine.OrderResult memory r =
-                matchingEngine.limitSell(address(token1), address(token2), PRICE, 1e18, true, 2, trader1);
+                matchingEngine.limitSell(
+                    IMatchingEngine.LimitOrderInput({
+                        base: address(token1),
+                        quote: address(token2),
+                        price: PRICE,
+                        amount: 1e18,
+                        isMaker: true,
+                        n: 2,
+                        recipient: trader1
+                    })
+                );
             ids[i] = r.id;
         }
 
@@ -63,7 +73,12 @@ contract PoCUpdateOrdersValueReplay is BaseSetup {
                 price: PRICE,
                 amount: 1e18,
                 n: 2,
-                recipient: trader1
+                recipient: trader1,
+                // Pins the pre-struct behaviour: _createOrder hardcoded isMaker = true,
+                // and 0 means venue default / no deadline, so this PoC is unchanged.
+                isMaker: true,
+                slippageLimit: 0,
+                deadline: 0
             });
         }
 
@@ -98,7 +113,17 @@ contract PoCUpdateOrdersValueReplay is BaseSetup {
         for (uint256 i = 0; i < 2; i++) {
             vm.prank(trader1);
             IMatchingEngine.OrderResult memory r =
-                matchingEngine.limitSell(address(token1), address(token2), PRICE, 1e18, true, 2, trader1);
+                matchingEngine.limitSell(
+                    IMatchingEngine.LimitOrderInput({
+                        base: address(token1),
+                        quote: address(token2),
+                        price: PRICE,
+                        amount: 1e18,
+                        isMaker: true,
+                        n: 2,
+                        recipient: trader1
+                    })
+                );
             ids[i] = r.id;
         }
 
@@ -115,7 +140,12 @@ contract PoCUpdateOrdersValueReplay is BaseSetup {
                 price: PRICE,
                 amount: 1e18,
                 n: 2,
-                recipient: trader1
+                recipient: trader1,
+                // Pins the pre-struct behaviour: _createOrder hardcoded isMaker = true,
+                // and 0 means venue default / no deadline, so this PoC is unchanged.
+                isMaker: true,
+                slippageLimit: 0,
+                deadline: 0
             });
         }
 

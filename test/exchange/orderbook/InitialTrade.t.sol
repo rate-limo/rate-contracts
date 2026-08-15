@@ -7,6 +7,7 @@ import {MockBTC} from "../../../src/mock/MockBTC.sol";
 import {ErrToken} from "../../../src/mock/MockTokenOver18Decimals.sol";
 import {Utils} from "../../utils/Utils.sol";
 import {MatchingEngine} from "../../../src/exchange/MatchingEngine.sol";
+import {IMatchingEngine} from "../../../src/exchange/interfaces/IMatchingEngine.sol";
 import {OrderbookFactory} from "../../../src/exchange/orderbooks/OrderbookFactory.sol";
 import {Orderbook} from "../../../src/exchange/orderbooks/Orderbook.sol";
 import {ExchangeOrderbook} from "../../../src/exchange/libraries/ExchangeOrderbook.sol";
@@ -25,6 +26,21 @@ contract InitialTradeTest is BaseSetup {
         // placeBid or placeAsk two of them is using the _insertId function it will revert
         // because the program will enter the "if (amount > self.orders[head].depositAmount)."
         // statement, and eventually, it will cause an infinite loop.
-        matchingEngine.limitSellETH{value: 1e4}(address(token2), 500000000, true, 2, trader1);
+        matchingEngine.createOrder{value: 1e4}(
+            IMatchingEngine.CreateOrderInput({
+                base: matchingEngine.WETH(),
+                quote: address(token2),
+                isBid: false,
+                isLimit: true,
+                orderId: 0,
+                price: 500000000,
+                amount: 1e4,
+                n: 2,
+                recipient: trader1,
+                isMaker: true,
+                slippageLimit: 0,
+                deadline: 0
+            })
+        );
     }
 }

@@ -5,6 +5,7 @@ import {BaseSetup} from "../OrderbookBaseSetup.sol";
 import {IOrderbook} from "../../../src/exchange/interfaces/IOrderbook.sol";
 import {ExchangeOrderbook} from "../../../src/exchange/libraries/ExchangeOrderbook.sol";
 import {console} from "forge-std/console.sol";
+import {IMatchingEngine} from "../../../src/exchange/interfaces/IMatchingEngine.sol";
 
 /**
  * FIXED 2026-08-05. This began as a PoC: when a pair's base token had far fewer
@@ -55,7 +56,17 @@ contract DecimalsDustBonusTest is BaseSetup {
         vm.prank(trader1);
         sixDecQuote.approve(address(matchingEngine), makerDeposit);
         vm.prank(trader1);
-        matchingEngine.limitBuy(address(zeroDecBase), address(sixDecQuote), price, makerDeposit, true, 5, trader1);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(zeroDecBase),
+                quote: address(sixDecQuote),
+                price: price,
+                amount: makerDeposit,
+                isMaker: true,
+                n: 5,
+                recipient: trader1
+            })
+        );
 
         // Attacker fills with the smallest fill size the size-guard allows: 2 raw base tokens.
         uint256 attackerFillAmount = 2;
@@ -66,7 +77,17 @@ contract DecimalsDustBonusTest is BaseSetup {
         uint256 quoteBalanceBefore = sixDecQuote.balanceOf(attacker);
         uint256 makerBaseBalanceBefore = zeroDecBase.balanceOf(trader1);
         vm.prank(attacker);
-        matchingEngine.limitSell(address(zeroDecBase), address(sixDecQuote), price, attackerFillAmount, true, 5, attacker);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(zeroDecBase),
+                quote: address(sixDecQuote),
+                price: price,
+                amount: attackerFillAmount,
+                isMaker: true,
+                n: 5,
+                recipient: attacker
+            })
+        );
         uint256 quoteBalanceAfter = sixDecQuote.balanceOf(attacker);
         uint256 makerBaseBalanceAfter = zeroDecBase.balanceOf(trader1);
 

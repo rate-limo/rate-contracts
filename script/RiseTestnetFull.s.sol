@@ -33,10 +33,24 @@ contract DeployAll is Script {
     // ---------------------------------------------------------------- configuration
 
     /// Canonical WETH for the target chain. Left at address(0) a fresh WETH9 is deployed,
-    /// which is right for a testnet and wrong for anywhere real -- the previous script
-    /// carried a hardcoded 0x008fCD... from another chain entirely, which would have
-    /// silently bound the engine to a non-contract on Rise.
-    address constant WETH = address(0);
+    /// which is right for a testnet and wrong for anywhere real: WETH is a standalone
+    /// ERC-20 with no coupling to the engine, so minting a second one on a redeploy
+    /// strands every balance anyone has already wrapped and gives nothing back.
+    ///
+    /// **This must be the WETH the LIVE engine reports from `WETH()`.** It is the one
+    /// address in the stack that no broadcast record contains — the deploy script does
+    /// not create it — so nothing derives it and nothing catches a disagreement except
+    /// `pnpm --filter @iter/deployments verify`, which now compares the two.
+    ///
+    /// It said 0x63443A61… until 2026-08-15, with a comment claiming 0x008fCD… was "from
+    /// another chain entirely" and would bind the engine to a non-contract on Rise. That
+    /// is not true and was checkable: 0x008fCD… has code on Rise, answers symbol()
+    /// "WETH" / name() "Wrapped Ether" / decimals() 18, and holds ~44 ETH. The active
+    /// deploy path — `scripts/deploy-exchange.sh` runs `RiseTestnet.s.sol`, not this
+    /// script — has always used it, so the two scripts disagreed and only the dormant one
+    /// was wrong. A market listed against the other WETH quotes on chain and can never be
+    /// routed to from the app, which is how the whole of 2026-08-15 was spent.
+    address constant WETH = 0x008fCD6315c68EbAa31244aea174993f63Ef14D5;
 
     /// Receives protocol fees. address(0) uses the deployer.
     address constant FEE_TO = address(0);

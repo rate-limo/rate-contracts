@@ -14,7 +14,17 @@ contract MintTest is PointFarmSetup {
     // Trading without event will not mint points
     function testTradingWithoutEventWillNotMint() public {
         vm.startPrank(trader1);
-        matchingEngine.limitBuy(address(feeToken), address(stablecoin), 1000e8, 100e18, true, 2, address(trader1));
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(feeToken),
+                quote: address(stablecoin),
+                price: 1000e8,
+                amount: 100e18,
+                isMaker: true,
+                n: 2,
+                recipient: address(trader1)
+            })
+        );
         uint256 pointBalance = point.balanceOf(trader1);
         assert(pointBalance == 0);
     }
@@ -23,7 +33,17 @@ contract MintTest is PointFarmSetup {
     function testTradingWithEventWithoutMultiplierWillNotMint() public {
         mintSetUp();
         vm.startPrank(trader1);
-        matchingEngine.limitBuy(address(feeToken), address(stablecoin), 1000e8, 100e18, true, 2, address(trader1));
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(feeToken),
+                quote: address(stablecoin),
+                price: 1000e8,
+                amount: 100e18,
+                isMaker: true,
+                n: 2,
+                recipient: address(trader1)
+            })
+        );
         uint256 pointBalance = point.balanceOf(trader1);
         assert(pointBalance == 0);
     }
@@ -36,10 +56,30 @@ contract MintTest is PointFarmSetup {
         usdc.approve(address(matchingEngine), type(uint256).max);
 
         IMatchingEngine.OrderResult memory orderResult =
-            matchingEngine.marketBuy(address(base), address(usdc), 100000, true, 5, trader1, 200);
+            matchingEngine.marketBuy(
+                IMatchingEngine.MarketOrderInput({
+                    base: address(base),
+                    quote: address(usdc),
+                    amount: 100000,
+                    isMaker: true,
+                    n: 5,
+                    recipient: trader1,
+                    slippageLimit: 200
+                })
+            );
 
         matchingEngine.cancelOrder(address(base), address(usdc), true, orderResult.id);
 
-        matchingEngine.marketSell(address(base), address(usdc), 1e14, true, 5, trader1, 200);
+        matchingEngine.marketSell(
+            IMatchingEngine.MarketOrderInput({
+                base: address(base),
+                quote: address(usdc),
+                amount: 1e14,
+                isMaker: true,
+                n: 5,
+                recipient: trader1,
+                slippageLimit: 200
+            })
+        );
     }
 }

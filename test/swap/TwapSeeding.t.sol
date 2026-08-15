@@ -7,6 +7,7 @@ import {Oracle} from "../../src/exchange/libraries/Oracle.sol";
 import {MockToken} from "../../src/mock/MockToken.sol";
 import {Orderbook} from "../../src/exchange/orderbooks/Orderbook.sol";
 import {ExchangeOrderbook} from "../../src/exchange/libraries/ExchangeOrderbook.sol";
+import {IMatchingEngine} from "../../src/exchange/interfaces/IMatchingEngine.sol";
 
 /// How a pair's TWAP comes into existence. Every price in the swap-reporting work is
 /// measured against "TWAP 100.00", and that number is not stored anywhere -- it is
@@ -124,7 +125,17 @@ contract TwapSeedingTest is PoolBaseSetup {
         vm.prank(trader2);
         newQuote.approve(address(matchingEngine), 1000000e18);
         vm.prank(trader2);
-        matchingEngine.limitBuy(address(newBase), address(newQuote), 255e8, 100e18, true, 1, trader2);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(newBase),
+                quote: address(newQuote),
+                price: 255e8,
+                amount: 100e18,
+                isMaker: true,
+                n: 1,
+                recipient: trader2
+            })
+        );
         assertEq(fresh.lmp(), 255e8, "lmp moved immediately");
 
         (uint256 rightAfter,) = fresh.twap(600);

@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import {ExchangeOrderbook} from "../../../src/exchange/libraries/ExchangeOrderbook.sol";
 import {BaseSetup} from "../OrderbookBaseSetup.sol";
 import {Orderbook} from "../../../src/exchange/orderbooks/Orderbook.sol";
+import {IMatchingEngine} from "../../../src/exchange/interfaces/IMatchingEngine.sol";
 
 contract MockOGFeePolicy {
     uint32 public makerFee;
@@ -61,9 +62,29 @@ contract FeeSplitTest is BaseSetup {
         uint256 feeToBalanceBefore = token2.balanceOf(booker);
 
         vm.prank(trader1);
-        matchingEngine.limitBuy(address(token1), address(token2), 1e8, 100e18, true, 2, trader1);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 1e8,
+                amount: 100e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
         vm.prank(trader2);
-        matchingEngine.limitSell(address(token1), address(token2), 1e8, 100e18, true, 2, trader2);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 1e8,
+                amount: 100e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader2
+            })
+        );
 
         // booker is BaseSetup's feeTo recipient (see OrderbookBaseSetup.sol setUp);
         // with poolFeeShare defaulting to 0, this must be unaffected by this change --
@@ -103,9 +124,29 @@ contract FeeSplitTest is BaseSetup {
         // load-bearing now: the maker leg is fee-free, so a resting pool order collects
         // no fee and there would be nothing to split. Only a taker fee can be shared.
         vm.prank(trader2);
-        matchingEngine.limitSell(address(token1), address(token2), 1e8, 100e18, true, 2, trader2);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 1e8,
+                amount: 100e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader2
+            })
+        );
         // Place this order AS the registered pool (msg.sender/recipient = address(this)).
-        matchingEngine.limitBuy(address(token1), address(token2), 1e8, 100e18, true, 2, address(this));
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 1e8,
+                amount: 100e18,
+                isMaker: true,
+                n: 2,
+                recipient: address(this)
+            })
+        );
 
         // Compute the expected pool gain from the contract's own fee rate rather than
         // hardcoding it, so this stays correct if defaults ever change.
@@ -138,9 +179,29 @@ contract FeeSplitTest is BaseSetup {
 
         // trader1 rests the bid and is therefore the maker; trader2 crosses it.
         vm.prank(trader1);
-        matchingEngine.limitBuy(address(token1), address(token2), 1e8, 100e18, true, 2, trader1);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 1e8,
+                amount: 100e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
         vm.prank(trader2);
-        matchingEngine.limitSell(address(token1), address(token2), 1e8, 100e18, true, 2, trader2);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 1e8,
+                amount: 100e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader2
+            })
+        );
 
         // The maker receives the full matched base amount -- no deduction.
         assertEq(token1.balanceOf(trader1) - makerBefore, 100e18, "maker must receive gross");

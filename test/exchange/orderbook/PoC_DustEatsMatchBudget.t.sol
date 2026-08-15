@@ -5,6 +5,7 @@ import {BaseSetup} from "../OrderbookBaseSetup.sol";
 import {IOrderbook} from "../../../src/exchange/interfaces/IOrderbook.sol";
 import {ExchangeOrderbook} from "../../../src/exchange/libraries/ExchangeOrderbook.sol";
 import {console} from "forge-std/console.sol";
+import {IMatchingEngine} from "../../../src/exchange/interfaces/IMatchingEngine.sol";
 
 /**
  * Does leftover dust affect a real trader, or is it only an accounting curiosity?
@@ -68,14 +69,34 @@ contract PoCDustEatsMatchBudgetTest is BaseSetup {
         vm.prank(maker);
         quote6.approve(address(matchingEngine), deposit);
         vm.prank(maker);
-        matchingEngine.limitBuy(address(base18), address(quote6), PRICE, deposit, true, 5, maker);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(base18),
+                quote: address(quote6),
+                price: PRICE,
+                amount: deposit,
+                isMaker: true,
+                n: 5,
+                recipient: maker
+            })
+        );
 
         uint256 fill = 5.8e12; // consumes 17,400, leaving 2,600 -- below the 3,000 floor
         base18.mint(filler, fill);
         vm.prank(filler);
         base18.approve(address(matchingEngine), fill);
         vm.prank(filler);
-        matchingEngine.limitSell(address(base18), address(quote6), PRICE, fill, true, 5, filler);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(base18),
+                quote: address(quote6),
+                price: PRICE,
+                amount: fill,
+                isMaker: true,
+                n: 5,
+                recipient: filler
+            })
+        );
     }
 
     function testDustOrdersConsumeTheNextTakersMatchBudget() public {
@@ -96,7 +117,17 @@ contract PoCDustEatsMatchBudgetTest is BaseSetup {
         vm.prank(address(0xBEEF));
         quote6.approve(address(matchingEngine), realDeposit);
         vm.prank(address(0xBEEF));
-        matchingEngine.limitBuy(address(base18), address(quote6), PRICE, realDeposit, true, 5, address(0xBEEF));
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(base18),
+                quote: address(quote6),
+                price: PRICE,
+                amount: realDeposit,
+                isMaker: true,
+                n: 5,
+                recipient: address(0xBEEF)
+            })
+        );
 
         // A taker with a budget of exactly 3 matches -- enough for the real order if
         // the dust were free to skip, and not enough if it is not.
@@ -107,7 +138,17 @@ contract PoCDustEatsMatchBudgetTest is BaseSetup {
 
         uint256 quoteBefore = quote6.balanceOf(attacker);
         vm.prank(attacker);
-        matchingEngine.limitSell(address(base18), address(quote6), PRICE, sell, true, 3, attacker);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(base18),
+                quote: address(quote6),
+                price: PRICE,
+                amount: sell,
+                isMaker: true,
+                n: 3,
+                recipient: attacker
+            })
+        );
         uint256 received = quote6.balanceOf(attacker) - quoteBefore;
 
         console.log("taker budget (n):                3");
@@ -136,7 +177,17 @@ contract PoCDustEatsMatchBudgetTest is BaseSetup {
         vm.prank(address(0xBEEF));
         quote6.approve(address(matchingEngine), realDeposit);
         vm.prank(address(0xBEEF));
-        matchingEngine.limitBuy(address(base18), address(quote6), PRICE, realDeposit, true, 5, address(0xBEEF));
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(base18),
+                quote: address(quote6),
+                price: PRICE,
+                amount: realDeposit,
+                isMaker: true,
+                n: 5,
+                recipient: address(0xBEEF)
+            })
+        );
 
         uint256 sell = 1e18;
         base18.mint(attacker, sell);
@@ -145,7 +196,17 @@ contract PoCDustEatsMatchBudgetTest is BaseSetup {
 
         uint256 quoteBefore = quote6.balanceOf(attacker);
         vm.prank(attacker);
-        matchingEngine.limitSell(address(base18), address(quote6), PRICE, sell, true, 4, attacker);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(base18),
+                quote: address(quote6),
+                price: PRICE,
+                amount: sell,
+                isMaker: true,
+                n: 4,
+                recipient: attacker
+            })
+        );
         uint256 received = quote6.balanceOf(attacker) - quoteBefore;
 
         console.log("taker budget (n):                4");
@@ -176,7 +237,17 @@ contract PoCDustEatsMatchBudgetTest is BaseSetup {
         vm.prank(address(0xBEEF));
         quote6.approve(address(matchingEngine), realDeposit);
         vm.prank(address(0xBEEF));
-        matchingEngine.limitBuy(address(base18), address(quote6), PRICE, realDeposit, true, 5, address(0xBEEF));
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(base18),
+                quote: address(quote6),
+                price: PRICE,
+                amount: realDeposit,
+                isMaker: true,
+                n: 5,
+                recipient: address(0xBEEF)
+            })
+        );
 
         uint256 sell = 1e18;
         base18.mint(attacker, sell);
@@ -186,7 +257,17 @@ contract PoCDustEatsMatchBudgetTest is BaseSetup {
         // Budget of exactly 1: enough for the real order, if the dust were free.
         uint256 quoteBefore = quote6.balanceOf(attacker);
         vm.prank(attacker);
-        matchingEngine.limitSell(address(base18), address(quote6), PRICE, sell, true, 1, attacker);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(base18),
+                quote: address(quote6),
+                price: PRICE,
+                amount: sell,
+                isMaker: true,
+                n: 1,
+                recipient: attacker
+            })
+        );
         uint256 received = quote6.balanceOf(attacker) - quoteBefore;
 
         console.log("FIFO - taker budget:          1");

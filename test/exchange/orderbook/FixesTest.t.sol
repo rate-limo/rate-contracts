@@ -41,16 +41,66 @@ contract FixesTest is BaseSetup {
         // Place 5 asks at price=10 with strictly decreasing amounts so they insert
         // in descending-deposit order:  head -> 100e18 -> 80e18 -> 60e18 -> 40e18 -> 20e18 -> null
         vm.prank(trader1);
-        matchingEngine.limitSell(address(token1), address(token2), 10, 100e18, true, 2, trader1);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 10,
+                amount: 100e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
         vm.prank(trader1);
-        matchingEngine.limitSell(address(token1), address(token2), 10, 80e18, true, 2, trader1);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 10,
+                amount: 80e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
         vm.prank(trader1);
         IMatchingEngine.OrderResult memory thirdOrder =
-            matchingEngine.limitSell(address(token1), address(token2), 10, 60e18, true, 2, trader1);
+            matchingEngine.limitSell(
+                IMatchingEngine.LimitOrderInput({
+                    base: address(token1),
+                    quote: address(token2),
+                    price: 10,
+                    amount: 60e18,
+                    isMaker: true,
+                    n: 2,
+                    recipient: trader1
+                })
+            );
         vm.prank(trader1);
-        matchingEngine.limitSell(address(token1), address(token2), 10, 40e18, true, 2, trader1);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 10,
+                amount: 40e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
         vm.prank(trader1);
-        matchingEngine.limitSell(address(token1), address(token2), 10, 20e18, true, 2, trader1);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 10,
+                amount: 20e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
 
         uint256 balanceBefore = token1.balanceOf(trader1);
 

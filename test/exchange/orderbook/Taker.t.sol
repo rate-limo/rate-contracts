@@ -16,6 +16,7 @@ import {WETH9} from "../../../src/mock/WETH9.sol";
 import {BaseSetup} from "../OrderbookBaseSetup.sol";
 import {console} from "forge-std/console.sol";
 import {stdStorage, StdStorage, Test} from "forge-std/Test.sol";
+import {IMatchingEngine} from "../../../src/exchange/interfaces/IMatchingEngine.sol";
 
 contract MarketOrderTest is BaseSetup {
     function _setupVolatilityTest()
@@ -32,8 +33,28 @@ contract MarketOrderTest is BaseSetup {
         base.approve(address(matchingEngine), type(uint256).max);
         quote.approve(address(matchingEngine), type(uint256).max);
         // make last matched price
-        matchingEngine.limitBuy(address(base), address(quote), 1e8, 1e18, true, 2, trader1);
-        matchingEngine.limitSell(address(base), address(quote), 1e8, 1e18, true, 2, trader1);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(base),
+                quote: address(quote),
+                price: 1e8,
+                amount: 1e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(base),
+                quote: address(quote),
+                price: 1e8,
+                amount: 1e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
         mp = matchingEngine.mktPrice(address(base), address(quote));
         up = (mp * (10000 + 200)) / 10000;
         down = (mp * (10000 - 200)) / 10000;
@@ -44,7 +65,17 @@ contract MarketOrderTest is BaseSetup {
         (MockBase base, MockQuote quote, Orderbook _book, uint256 _mp, uint256 _up, uint256 _down) =
             _setupVolatilityTest();
         uint256 beforeB = base.balanceOf(trader1);
-        matchingEngine.marketSell(address(base), address(quote), 1e18, false, 2, trader1, 200);
+        matchingEngine.marketSell(
+            IMatchingEngine.MarketOrderInput({
+                base: address(base),
+                quote: address(quote),
+                amount: 1e18,
+                isMaker: false,
+                n: 2,
+                recipient: trader1,
+                slippageLimit: 200
+            })
+        );
         uint256 afterB = base.balanceOf(trader1);
         console.log("before balance: ", beforeB);
         console.log("after balance: ", afterB);
@@ -55,7 +86,17 @@ contract MarketOrderTest is BaseSetup {
         (MockBase base, MockQuote quote, Orderbook _book, uint256 _mp, uint256 _up, uint256 _down) =
             _setupVolatilityTest();
         uint256 beforeB = base.balanceOf(trader1);
-        matchingEngine.marketBuy(address(base), address(quote), 1e18, false, 2, trader1, 200);
+        matchingEngine.marketBuy(
+            IMatchingEngine.MarketOrderInput({
+                base: address(base),
+                quote: address(quote),
+                amount: 1e18,
+                isMaker: false,
+                n: 2,
+                recipient: trader1,
+                slippageLimit: 200
+            })
+        );
         uint256 afterB = base.balanceOf(trader1);
         console.log("before balance: ", beforeB);
         console.log("after balance: ", afterB);
@@ -66,7 +107,17 @@ contract MarketOrderTest is BaseSetup {
         (MockBase base, MockQuote quote, Orderbook _book, uint256 _mp, uint256 _up, uint256 _down) =
             _setupVolatilityTest();
         uint256 beforeB = base.balanceOf(trader1);
-        matchingEngine.limitBuy(address(base), address(quote), 1e2, 1e18, false, 2, trader1);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(base),
+                quote: address(quote),
+                price: 1e2,
+                amount: 1e18,
+                isMaker: false,
+                n: 2,
+                recipient: trader1
+            })
+        );
         uint256 afterB = base.balanceOf(trader1);
         console.log("before balance: ", beforeB);
         console.log("after balance: ", afterB);
@@ -77,7 +128,17 @@ contract MarketOrderTest is BaseSetup {
         (MockBase base, MockQuote quote, Orderbook _book, uint256 _mp, uint256 _up, uint256 _down) =
             _setupVolatilityTest();
         uint256 beforeB = base.balanceOf(trader1);
-        matchingEngine.limitSell(address(base), address(quote), 1e19, 1e18, false, 2, trader1);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(base),
+                quote: address(quote),
+                price: 1e19,
+                amount: 1e18,
+                isMaker: false,
+                n: 2,
+                recipient: trader1
+            })
+        );
         uint256 afterB = base.balanceOf(trader1);
         console.log("before balance: ", beforeB);
         console.log("after balance: ", afterB);
@@ -95,10 +156,30 @@ contract MarketOrderTest is BaseSetup {
         base.approve(address(matchingEngine), type(uint256).max);
         quote.approve(address(matchingEngine), type(uint256).max);
         // make last matched price
-        matchingEngine.limitBuy(address(base), address(quote), 1e8, 1e18, true, 2, trader1);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(base),
+                quote: address(quote),
+                price: 1e8,
+                amount: 1e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
         matchingEngine.cancelOrder(address(base), address(quote), true, 1);
         uint256 beforeB = base.balanceOf(trader1);
-        matchingEngine.limitSell(address(base), address(quote), 1e8, 1e18, false, 2, trader1);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(base),
+                quote: address(quote),
+                price: 1e8,
+                amount: 1e18,
+                isMaker: false,
+                n: 2,
+                recipient: trader1
+            })
+        );
         uint256 afterB = base.balanceOf(trader1);
         console.log("before balance: ", beforeB);
         console.log("after balance: ", afterB);

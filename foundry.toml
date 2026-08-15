@@ -36,6 +36,19 @@ solc = "0.8.24"
 optimizer = true
 optimizer_runs = 200
 
+# Foundry's default test gas limit is 2^30 (1,073,741,824), and one test sat inside 9% of
+# it: PoC_EstimateGasOnly's revert-carries-no-returndata case spends ~981M on forge 1.5.1
+# building 4,000 attacker positions before the call it actually asserts on. CI installs
+# foundry `nightly`, whose accounting put the same test at 1,073,717,314 -- 24,510 gas short
+# of the ceiling -- so the TEST FRAME died with `EvmError: Revert` and contracts CI was red
+# on every push for weeks, on a test that passes locally.
+#
+# Set explicitly so that headroom is a property of this file rather than of whichever forge
+# the runner happens to install. It does not weaken any assertion: every test that asserts
+# out-of-gas behaviour bounds its own inner call with `call{gas: N}` (see
+# UnboundedOrderQueue.regression.t.sol and the PoC above), which this does not touch.
+gas_limit = 3000000000
+
 # openzeppelin-foundry-upgrades (script/exchange/RiseTestnet.s.sol) needs all three to run
 # its storage-layout safety checks. Harmless for the scripts that do not use it.
 ffi = true
@@ -43,7 +56,14 @@ ast = true
 build_info = true
 extra_output = ["storageLayout"]
 
-fs_permissions = [{ access = "read", path = "./out" }]
+# ./out for the upgrades checks above; the registry so a script can read the LIVE addresses
+# instead of carrying its own copy. A hardcoded engine constant in a seed script survived a
+# redeploy on 2026-08-15 and seeded the retired exchange — silently, because the retired
+# contracts still answer every call.
+fs_permissions = [
+  { access = "read", path = "./out" },
+  { access = "read", path = "../packages/deployments/deployments.json" },
+]
 
 [profile.ci]
 # Referenced by .github/workflows/test.yml (FOUNDRY_PROFILE: ci).

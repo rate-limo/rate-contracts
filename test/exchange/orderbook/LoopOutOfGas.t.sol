@@ -30,14 +30,54 @@ contract LoopOutOfGasTest is BaseSetup {
         book = Orderbook(payable(orderbookFactory.getPair(address(token1), address(token2))));
 
         vm.prank(trader1);
-        matchingEngine.limitBuy(address(token1), address(token2), 2, 10, true, 2, trader1);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 2,
+                amount: 10,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
         vm.prank(trader1);
-        matchingEngine.limitBuy(address(token1), address(token2), 5, 10, true, 2, trader1);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 5,
+                amount: 10,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
         vm.prank(trader1);
-        matchingEngine.limitBuy(address(token1), address(token2), 5, 10, true, 2, trader1);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 5,
+                amount: 10,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
         vm.prank(trader1);
         // Previously infinite-looped on _insert; now completes correctly.
-        matchingEngine.limitBuy(address(token1), address(token2), 1, 10, true, 2, trader1);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 1,
+                amount: 10,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
 
         uint256[] memory prices = book.getPrices(true, 10);
         // With lmp=2: bids at 5 are spread-capped to 2 (same price), bid at 1 is below cap.
@@ -55,14 +95,54 @@ contract LoopOutOfGasTest is BaseSetup {
         book = Orderbook(payable(orderbookFactory.getPair(address(token1), address(token2))));
 
         vm.prank(trader1);
-        matchingEngine.limitSell(address(token1), address(token2), 2, 5e7, true, 2, trader1);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 2,
+                amount: 5e7,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
         vm.prank(trader1);
-        matchingEngine.limitSell(address(token1), address(token2), 5, 2e7, true, 2, trader1);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 5,
+                amount: 2e7,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
         vm.prank(trader1);
-        matchingEngine.limitSell(address(token1), address(token2), 5, 2e7, true, 2, trader1);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 5,
+                amount: 2e7,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
         vm.prank(trader1);
         // Previously infinite-looped on _insert; now completes and price 6 is appended above 5.
-        matchingEngine.limitSell(address(token1), address(token2), 6, 2e7, true, 2, trader1);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 6,
+                amount: 2e7,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
 
         uint256[] memory prices = book.getPrices(false, 10);
         // Ask list is ascending: 2 -> 5 -> 6
@@ -81,11 +161,31 @@ contract LoopOutOfGasTest is BaseSetup {
         book = Orderbook(payable(orderbookFactory.getPair(address(token1), address(token2))));
 
         vm.prank(trader1);
-        matchingEngine.limitSell(address(token1), address(token2), 5, 2e7, true, 2, trader1);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 5,
+                amount: 2e7,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
         vm.prank(trader1);
         // Previously infinite-looped on _insertId; now completes correctly.
         // Price 1 is below the spread floor (5*0.98=4), so it is raised to 4.
-        matchingEngine.limitSell(address(token1), address(token2), 1, 1e8, true, 2, trader1);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 1,
+                amount: 1e8,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
 
         uint256[] memory prices = book.getPrices(false, 10);
         assertEq(prices[0], 4, "ask head should be 4 (spread floor raises 1->4)");
@@ -103,12 +203,42 @@ contract LoopOutOfGasTest is BaseSetup {
         book = Orderbook(payable(orderbookFactory.getPair(address(token1), address(token2))));
 
         vm.prank(trader1);
-        matchingEngine.limitBuy(address(token1), address(token2), 10, 10, true, 2, trader1);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 10,
+                amount: 10,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
         vm.prank(trader1);
         IMatchingEngine.OrderResult memory midOrder =
-            matchingEngine.limitBuy(address(token1), address(token2), 9, 10, true, 2, trader1);
+            matchingEngine.limitBuy(
+                IMatchingEngine.LimitOrderInput({
+                    base: address(token1),
+                    quote: address(token2),
+                    price: 9,
+                    amount: 10,
+                    isMaker: true,
+                    n: 2,
+                    recipient: trader1
+                })
+            );
         vm.prank(trader1);
-        matchingEngine.limitBuy(address(token1), address(token2), 8, 10, true, 2, trader1);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 8,
+                amount: 10,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
 
         uint256[] memory before = book.getPrices(true, 5);
         assertEq(before[0], 10, "bid head before cancel");
@@ -138,12 +268,42 @@ contract LoopOutOfGasTest is BaseSetup {
         book = Orderbook(payable(orderbookFactory.getPair(address(token1), address(token2))));
 
         vm.prank(trader1);
-        matchingEngine.limitSell(address(token1), address(token2), 2, 5e7, true, 2, trader1);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 2,
+                amount: 5e7,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
         vm.prank(trader1);
         IMatchingEngine.OrderResult memory midOrder =
-            matchingEngine.limitSell(address(token1), address(token2), 5, 5e7, true, 2, trader1);
+            matchingEngine.limitSell(
+                IMatchingEngine.LimitOrderInput({
+                    base: address(token1),
+                    quote: address(token2),
+                    price: 5,
+                    amount: 5e7,
+                    isMaker: true,
+                    n: 2,
+                    recipient: trader1
+                })
+            );
         vm.prank(trader1);
-        matchingEngine.limitSell(address(token1), address(token2), 10, 5e7, true, 2, trader1);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 10,
+                amount: 5e7,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
 
         uint256[] memory before = book.getPrices(false, 5);
         assertEq(before[0], 2,  "ask head before cancel");

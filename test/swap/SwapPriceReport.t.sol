@@ -7,6 +7,7 @@ import {SwapRouter} from "../../src/swap/SwapRouter.sol";
 import {ISwapRouter} from "../../src/swap/interfaces/ISwapRouter.sol";
 import {IPool} from "../../src/swap/interfaces/IPool.sol";
 import {IOrderbook} from "../../src/exchange/interfaces/IOrderbook.sol";
+import {IMatchingEngine} from "../../src/exchange/interfaces/IMatchingEngine.sol";
 
 /// Swaps used to be invisible to the price: Pool.swap settles off-book and wrote no lmp
 /// and no oracle observation, so the TWAP it prices against could only be moved by order
@@ -67,7 +68,14 @@ contract SwapPriceReportTest is PoolBaseSetup {
         _expectReport(lmpBefore, reported, written, true);
         vm.prank(trader1);
         out = router.swap(
-            _path(address(token2), address(token1)), amountIn, 0, trader1, ISwapRouter.RemainderMode.Refund, empty
+            ISwapRouter.SwapInput({
+                path: _path(address(token2), address(token1)),
+                amountIn: amountIn,
+                minAmountOut: 0,
+                recipient: trader1,
+                remainderMode: ISwapRouter.RemainderMode.Refund,
+                remainderConfig: empty
+            })
         );
     }
 
@@ -80,7 +88,14 @@ contract SwapPriceReportTest is PoolBaseSetup {
         _expectReport(lmpBefore, reported, written, false);
         vm.prank(trader1);
         out = router.swap(
-            _path(address(token1), address(token2)), amountIn, 0, trader1, ISwapRouter.RemainderMode.Refund, empty
+            ISwapRouter.SwapInput({
+                path: _path(address(token1), address(token2)),
+                amountIn: amountIn,
+                minAmountOut: 0,
+                recipient: trader1,
+                remainderMode: ISwapRouter.RemainderMode.Refund,
+                remainderConfig: empty
+            })
         );
     }
 
@@ -129,7 +144,14 @@ contract SwapPriceReportTest is PoolBaseSetup {
         vm.startPrank(trader1);
         token2.approve(address(router), amountIn);
         out = router.swap(
-            _path(address(token2), address(token1)), amountIn, 0, trader1, ISwapRouter.RemainderMode.Refund, empty
+            ISwapRouter.SwapInput({
+                path: _path(address(token2), address(token1)),
+                amountIn: amountIn,
+                minAmountOut: 0,
+                recipient: trader1,
+                remainderMode: ISwapRouter.RemainderMode.Refund,
+                remainderConfig: empty
+            })
         );
         vm.stopPrank();
     }
@@ -138,7 +160,14 @@ contract SwapPriceReportTest is PoolBaseSetup {
         vm.startPrank(trader1);
         token1.approve(address(router), amountIn);
         out = router.swap(
-            _path(address(token1), address(token2)), amountIn, 0, trader1, ISwapRouter.RemainderMode.Refund, empty
+            ISwapRouter.SwapInput({
+                path: _path(address(token1), address(token2)),
+                amountIn: amountIn,
+                minAmountOut: 0,
+                recipient: trader1,
+                remainderMode: ISwapRouter.RemainderMode.Refund,
+                remainderConfig: empty
+            })
         );
         vm.stopPrank();
     }
@@ -356,7 +385,17 @@ contract SwapPriceReportTest is PoolBaseSetup {
     /// recording it pulls a book-inflated lmp back toward the oracle.
     function testBuyLowersLmpWhenTheBookHasRatchetedItAboveTheTwap() public {
         vm.prank(trader2);
-        matchingEngine.limitBuy(address(token1), address(token2), 110e8, 100e18, true, 1, trader2);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 110e8,
+                amount: 100e18,
+                isMaker: true,
+                n: 1,
+                recipient: trader2
+            })
+        );
         assertEq(_lmp(), 110e8, "precondition: the book moved lmp with no trade behind it");
 
         (uint256 twap,) = IOrderbook(pool.orderbook()).twap(600);
@@ -374,7 +413,17 @@ contract SwapPriceReportTest is PoolBaseSetup {
     /// single-sided test.
     function testSellRaisesLmpWhenTheBookHasRatchetedItBelowTheTwap() public {
         vm.prank(trader2);
-        matchingEngine.limitSell(address(token1), address(token2), 91e8, 10e18, true, 1, trader2);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 91e8,
+                amount: 10e18,
+                isMaker: true,
+                n: 1,
+                recipient: trader2
+            })
+        );
         assertEq(_lmp(), 91e8, "precondition: the book moved lmp with no trade behind it");
 
         (uint256 twap,) = IOrderbook(pool.orderbook()).twap(600);

@@ -15,15 +15,36 @@ import {WETH9} from "../../../src/mock/WETH9.sol";
 import {BaseSetup} from "../OrderbookBaseSetup.sol";
 import {console} from "forge-std/console.sol";
 import {stdStorage, StdStorage, Test} from "forge-std/Test.sol";
+import {IMatchingEngine} from "../../../src/exchange/interfaces/IMatchingEngine.sol";
 
 contract ManipulationTest is BaseSetup {
     function testManipulateMarketPrice() public {
         super.setUp();
         matchingEngine.addPair(address(token1), address(token2), 90e8, 0, address(token1), ExchangeOrderbook.MatchingMode.PriceTimePriority);
         vm.prank(trader1);
-        matchingEngine.limitSell(address(token1), address(token2), 90e8, 100e18, true, 2, trader1);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 90e8,
+                amount: 100e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
         vm.prank(trader1);
-        matchingEngine.limitBuy(address(token1), address(token2), 110e8, 100e18, true, 2, trader1);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 110e8,
+                amount: 100e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
         book = Orderbook(payable(orderbookFactory.getPair(address(token1), address(token2))));
         console.log("Market price before manipulation: ", book.mktPrice());
         vm.prank(attacker);

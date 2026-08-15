@@ -13,6 +13,7 @@ import {IMatchingEngine} from "../exchange/interfaces/IMatchingEngine.sol";
 import {IProtocol} from "../incentive/interfaces/IProtocol.sol";
 import {IPositionManager} from "../swap/interfaces/IPositionManager.sol";
 import {IPool} from "../swap/interfaces/IPool.sol";
+import {AssetLaunchLib} from "./libraries/AssetLaunchLib.sol";
 
 /// @notice A fixed-supply ERC-20 minted once at construction.
 /// @dev No mint function, no owner, no burn hook: the supply the generator mints is
@@ -462,7 +463,10 @@ contract AssetGenerator is IProtocol, AccessControl, ReentrancyGuard, ERC1155Hol
         if (slippageLimitBps < minSlippageLimitBps || slippageLimitBps > maxSlippageLimitBps) {
             revert InvalidVolatility(slippageLimitBps);
         }
-        if (makerFee < minPairFee || makerFee > maxPairFee) {
+        // Makers are intentionally free across Iter. `minPairFee` protects the
+        // taker-fee floor; applying it to makers makes the documented 0 fee
+        // impossible for graduated markets.
+        if (makerFee != 0 && (makerFee < minPairFee || makerFee > maxPairFee)) {
             revert FeeOutsidePairRange(makerFee, minPairFee, maxPairFee);
         }
         if (takerFee < minPairFee || takerFee > maxPairFee) {
@@ -667,6 +671,13 @@ contract AssetGenerator is IProtocol, AccessControl, ReentrancyGuard, ERC1155Hol
         return _launch(name, symbol, initialSupply, quote, settings, true);
     }
 
+    /// @dev Validation (`AssetLaunchLib.validateLaunchSettings`) and the listing +
+    /// payment interactions (`AssetLaunchLib.settleListing`) live in AssetLaunchLib --
+    /// moved out purely for EIP-170 headroom. Both are `public` library functions, so
+    /// these calls are DELEGATECALLs: storage access, `msg.sender`, `msg.value` and the
+    /// Coin's deployer address are all unchanged from direct execution. Mapping reads
+    /// and writes stay here rather than crossing into the library -- see
+    /// AssetLaunchLib's docstring for why.
     function _launch(
         string calldata name,
         string calldata symbol,
@@ -678,23 +689,15 @@ contract AssetGenerator is IProtocol, AccessControl, ReentrancyGuard, ERC1155Hol
         // ---- checks
         if (bytes(name).length == 0 || bytes(symbol).length == 0) revert EmptyMetadata();
         if (initialSupply == 0) revert SupplyIsZero();
-        LaunchRuntime memory runtime;
-        runtime.option = _quoteOptions[quote];
-        if (!runtime.option.enabled) revert QuoteNotEnabled(quote);
-        if (enforceLaunchFlowBounds) _validateLaunchSettings(settings);
-        else if (settings.takerFee > FEE_DENOM) revert InvalidFee(settings.takerFee);
-
-        if (settings.paymentToken == address(0)) {
-            runtime.paymentAmount = launchFee;
-            if (msg.value < runtime.paymentAmount) revert InsufficientFee(msg.value, runtime.paymentAmount);
-        } else {
-            PaymentOption memory feePayment = paymentOptions[settings.paymentToken];
-            if (!feePayment.enabled) revert PaymentNotEnabled(settings.paymentToken);
-            if (msg.value != 0) revert UnexpectedNativePayment(msg.value);
-            runtime.paymentAmount = feePayment.amount;
+        QuoteOption memory option = _quoteOptions[quote];
+        if (!option.enabled) revert QuoteNotEnabled(quote);
+        if (enforceLaunchFlowBounds) {
+            AssetLaunchLib.validateLaunchSettings(
+                settings, minSlippageLimitBps, maxSlippageLimitBps, minPairFee, maxPairFee
+            );
+        } else if (settings.takerFee > FEE_DENOM) {
+            revert InvalidFee(settings.takerFee);
         }
-        runtime.feeRecipient = feeTo;
-        if (runtime.paymentAmount > 0 && runtime.feeRecipient == address(0)) revert FeeToNotSet();
 
         // ---- effects
         coin = address(new Coin(name, symbol, initialSupply, address(this)));
@@ -712,42 +715,23 @@ contract AssetGenerator is IProtocol, AccessControl, ReentrancyGuard, ERC1155Hol
         launchSettings[coin] = settings;
 
         // ---- interactions
-        address payment = runtime.option.listingPayment == address(0) ? coin : runtime.option.listingPayment;
-        // The engine pulls the listing cost from msg.sender -- this contract -- with
-        // transferFrom, unless it holds MARKET_MAKER_ROLE and lists for free. Approve only
-        // what this contract actually holds of the payment token, then drop the allowance
-        // again: a listing that spends less than the balance must not leave the engine able
-        // to move the rest, and resetting to zero also keeps approve-from-nonzero tokens
-        // working on the next launch.
-        uint256 paymentBalance = IERC20(payment).balanceOf(address(this));
-        if (paymentBalance > 0) TransferHelper.safeApprove(payment, matchingEngine, paymentBalance);
-        runtime.pair = IMatchingEngine(matchingEngine).addPair(
-            coin, quote, runtime.option.listingPrice, block.timestamp, payment, runtime.option.mode
+        PaymentOption memory feePayment = paymentOptions[settings.paymentToken];
+        address pair = AssetLaunchLib.settleListing(
+            matchingEngine,
+            coin,
+            quote,
+            option,
+            AssetLaunchLib.PaymentInfo({
+                token: settings.paymentToken,
+                launchFee: launchFee,
+                tokenEnabled: feePayment.enabled,
+                tokenAmount: feePayment.amount,
+                feeTo: feeTo
+            })
         );
-        launches[coin].pair = runtime.pair;
-        if (paymentBalance > 0) TransferHelper.safeApprove(payment, matchingEngine, 0);
+        launches[coin].pair = pair;
 
-        uint256 remaining = IERC20(coin).balanceOf(address(this));
-        if (remaining > 0) TransferHelper.safeTransfer(coin, msg.sender, remaining);
-
-        if (runtime.paymentAmount > 0) {
-            if (settings.paymentToken == address(0)) {
-                TransferHelper.safeTransferETH(runtime.feeRecipient, runtime.paymentAmount);
-            } else {
-                TransferHelper.safeTransferFrom(
-                    settings.paymentToken, msg.sender, runtime.feeRecipient, runtime.paymentAmount
-                );
-            }
-        }
-        if (settings.paymentToken == address(0)) {
-            uint256 refund = msg.value - runtime.paymentAmount;
-            if (refund > 0) {
-                (bool ok,) = payable(msg.sender).call{value: refund}("");
-                if (!ok) revert RefundFailed();
-            }
-        }
-
-        emit Launched(coin, msg.sender, runtime.pair, quote, initialSupply);
+        emit Launched(coin, msg.sender, pair, quote, initialSupply);
         emit LaunchSettingsRecorded(
             coin,
             settings.volatilityPreset,
@@ -758,28 +742,6 @@ contract AssetGenerator is IProtocol, AccessControl, ReentrancyGuard, ERC1155Hol
             settings.paymentToken,
             settings.liquidityLockDuration
         );
-    }
-
-    function _validateLaunchSettings(LaunchSettings memory settings) internal view {
-        if (settings.volatilityBps < minSlippageLimitBps || settings.volatilityBps > maxSlippageLimitBps) {
-            revert InvalidVolatility(settings.volatilityBps);
-        }
-        if (settings.takerFee < minPairFee || settings.takerFee > maxPairFee) {
-            revert InvalidFee(settings.takerFee);
-        }
-        if (settings.makerFee < minPairFee || settings.makerFee > maxPairFee) revert InvalidFee(settings.makerFee);
-        _validatePreset(settings.volatilityPreset, settings.volatilityBps, true);
-        _validatePreset(settings.feePreset, settings.takerFee, false);
-    }
-
-    function _validatePreset(Preset preset, uint256 value, bool volatility) internal pure {
-        if (preset == Preset.Custom) return;
-        uint256 expected;
-        if (preset == Preset.Stable) expected = volatility ? 5 : 50_000;
-        else if (preset == Preset.Standard) expected = volatility ? 10 : 100_000;
-        else if (preset == Preset.Uniswap) expected = volatility ? 50 : 500_000;
-        else expected = volatility ? 100 : 1_000_000;
-        if (value != expected) revert InvalidPresetValue(preset, value);
     }
 
     /* ---------------------------- liquidity locking --------------------------- */

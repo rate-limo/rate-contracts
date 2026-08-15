@@ -57,8 +57,23 @@ contract PoCUndecodableError is PoolBaseSetup {
         address[] memory path = new address[](2);
         path[0] = tokenIn;
         path[1] = tokenOut;
-        return abi.encodeWithSelector(
-            SwapRouter.swap.selector, path, amountIn, uint256(0), trader1, ISwapRouter.RemainderMode.Refund, empty
+        // encodeCall, not encodeWithSelector: the compiler then type-checks these arguments
+        // against the real signature. Hand-encoded positional calldata survived the move to
+        // ISwapRouter.SwapInput without a murmur — it simply stopped decoding, and every
+        // assertion here reported "no return data", which is exactly what these tests are
+        // built to detect. They were reporting on their own broken calldata.
+        return abi.encodeCall(
+            ISwapRouter.swap,
+            (
+                ISwapRouter.SwapInput({
+                    path: path,
+                    amountIn: amountIn,
+                    minAmountOut: uint256(0),
+                    recipient: trader1,
+                    remainderMode: ISwapRouter.RemainderMode.Refund,
+                    remainderConfig: empty
+                })
+            )
         );
     }
 

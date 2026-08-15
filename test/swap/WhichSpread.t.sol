@@ -65,7 +65,14 @@ contract WhichSpreadTest is PoolBaseSetup {
         vm.startPrank(trader1);
         token2.approve(address(router), 105e18);
         uint256 out = router.swap(
-            _path(address(token2), address(token1)), 105e18, 0, trader1, ISwapRouter.RemainderMode.Refund, empty
+            ISwapRouter.SwapInput({
+                path: _path(address(token2), address(token1)),
+                amountIn: 105e18,
+                minAmountOut: 0,
+                recipient: trader1,
+                remainderMode: ISwapRouter.RemainderMode.Refund,
+                remainderConfig: empty
+            })
         );
         vm.stopPrank();
 
@@ -86,7 +93,14 @@ contract WhichSpreadTest is PoolBaseSetup {
         vm.startPrank(trader1);
         token2.approve(address(router), 105e18);
         router.swap(
-            _path(address(token2), address(token1)), 105e18, 0, trader1, ISwapRouter.RemainderMode.Refund, empty
+            ISwapRouter.SwapInput({
+                path: _path(address(token2), address(token1)),
+                amountIn: 105e18,
+                minAmountOut: 0,
+                recipient: trader1,
+                remainderMode: ISwapRouter.RemainderMode.Refund,
+                remainderConfig: empty
+            })
         );
         vm.stopPrank();
 
@@ -103,7 +117,14 @@ contract WhichSpreadTest is PoolBaseSetup {
         vm.startPrank(trader1);
         token2.approve(address(router), 105e18);
         router.swap(
-            _path(address(token2), address(token1)), 105e18, 0, trader1, ISwapRouter.RemainderMode.Refund, empty
+            ISwapRouter.SwapInput({
+                path: _path(address(token2), address(token1)),
+                amountIn: 105e18,
+                minAmountOut: 0,
+                recipient: trader1,
+                remainderMode: ISwapRouter.RemainderMode.Refund,
+                remainderConfig: empty
+            })
         );
         vm.stopPrank();
 
@@ -118,7 +139,14 @@ contract WhichSpreadTest is PoolBaseSetup {
         vm.startPrank(trader1);
         token2.approve(address(router), 105e18);
         router.swap(
-            _path(address(token2), address(token1)), 105e18, 0, trader1, ISwapRouter.RemainderMode.Refund, empty
+            ISwapRouter.SwapInput({
+                path: _path(address(token2), address(token1)),
+                amountIn: 105e18,
+                minAmountOut: 0,
+                recipient: trader1,
+                remainderMode: ISwapRouter.RemainderMode.Refund,
+                remainderConfig: empty
+            })
         );
         vm.stopPrank();
 
@@ -142,12 +170,14 @@ contract WhichSpreadTest is PoolBaseSetup {
         vm.startPrank(trader1);
         token2.approve(address(router), 200000e18);
         router.swap(
-            _path(address(token2), address(token1)),
-            200000e18,
-            0,
-            trader1,
-            ISwapRouter.RemainderMode.RestAsOrder,
-            cfg
+            ISwapRouter.SwapInput({
+                path: _path(address(token2), address(token1)),
+                amountIn: 200000e18,
+                minAmountOut: 0,
+                recipient: trader1,
+                remainderMode: ISwapRouter.RemainderMode.RestAsOrder,
+                remainderConfig: cfg
+            })
         );
         vm.stopPrank();
 

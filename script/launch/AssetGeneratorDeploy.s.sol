@@ -32,9 +32,12 @@ import {ExchangeOrderbook} from "../../src/exchange/libraries/ExchangeOrderbook.
 /// terminal registration (the engine reads terminalName outside a try/catch during
 /// listing). Do it deliberately, after this script, having read AssetGenerator.feeOf.
 ///
-/// Run:
-///   forge script script/launch/AssetGeneratorDeploy.s.sol:DeployAssetGenerator \
+/// Run (the launch library is linked out and must be deployed first):
+///   forge script script/launch/AssetGeneratorDeploy.s.sol:DeployAssetLaunchLib \
 ///     --rpc-url $RPC --broadcast
+///   forge script script/launch/AssetGeneratorDeploy.s.sol:DeployAssetGenerator \
+///     --rpc-url $RPC --broadcast \
+///     --libraries src/asset/libraries/AssetLaunchLib.sol:AssetLaunchLib:$ASSET_LAUNCH_LIB
 ///   node packages/deployments/scripts/sync-deployment.mjs \
 ///     --script AssetGeneratorDeploy --chain $CHAIN_ID --contract AssetGenerator=assetGenerator
 ///
@@ -95,6 +98,20 @@ contract DeployAssetGenerator is Script {
         console.log("quote enabled=%s  startingTakerFee=%s", quote, startingTakerFee);
         console.log("next: node packages/deployments/scripts/sync-deployment.mjs \\");
         console.log("        --script AssetGeneratorDeploy --chain <id> --contract AssetGenerator=assetGenerator");
+    }
+}
+
+/// Deploys the external launch library used by AssetGenerator. Keep this as a
+/// separate transaction: Solidity libraries are linked by address at deploy
+/// time, and deploying the generator without --libraries leaves unresolved
+/// link references.
+contract DeployAssetLaunchLib is Script {
+    function run() external {
+        uint256 deployerKey = vm.envUint("DEPLOYER_KEY");
+        vm.startBroadcast(deployerKey);
+        address libraryAddress = deployCode("AssetLaunchLib.sol:AssetLaunchLib");
+        vm.stopBroadcast();
+        console.log("ASSET_LAUNCH_LIB=%s", libraryAddress);
     }
 }
 

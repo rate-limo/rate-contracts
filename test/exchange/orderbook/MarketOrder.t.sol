@@ -26,15 +26,50 @@ contract MarketOrderTest is BaseSetup {
         console.log("weth balance");
         console.log(trader1.balance / 1e18);
         vm.prank(trader1);
-        matchingEngine.limitSell(address(token1), address(weth), 1e8, 1e18, true, 5, trader1);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(weth),
+                price: 1e8,
+                amount: 1e18,
+                isMaker: true,
+                n: 5,
+                recipient: trader1
+            })
+        );
         (uint256 bidHead, uint256 askHead) = matchingEngine.heads(address(token1), address(weth));
         console.log(bidHead, askHead);
         vm.prank(trader1);
-        matchingEngine.marketBuyETH{value: 1e18}(address(token1), true, 5, trader1, 2000000);
+        matchingEngine.createOrder{value: 1e18}(
+            IMatchingEngine.CreateOrderInput({
+                base: address(token1),
+                quote: matchingEngine.WETH(),
+                isBid: true,
+                isLimit: false,
+                orderId: 0,
+                price: 0,
+                amount: 1e18,
+                n: 5,
+                recipient: trader1,
+                isMaker: true,
+                slippageLimit: 2000000,
+                deadline: 0
+            })
+        );
         vm.prank(trader1);
         token1.approve(address(matchingEngine), 10e18);
         vm.prank(trader1);
-        matchingEngine.marketSell(address(token1), address(weth), 1e18, true, 5, trader1, 2000000);
+        matchingEngine.marketSell(
+            IMatchingEngine.MarketOrderInput({
+                base: address(token1),
+                quote: address(weth),
+                amount: 1e18,
+                isMaker: true,
+                n: 5,
+                recipient: trader1,
+                slippageLimit: 2000000
+            })
+        );
         console.log("weth balance");
         console.log(trader1.balance / 1e18);
     }
@@ -45,13 +80,48 @@ contract MarketOrderTest is BaseSetup {
         console.log("weth balance");
         console.log(trader1.balance / 1e18);
         vm.prank(trader1);
-        matchingEngine.limitBuy(address(weth), address(token1), 1e8, 1e18, true, 5, trader1);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(weth),
+                quote: address(token1),
+                price: 1e8,
+                amount: 1e18,
+                isMaker: true,
+                n: 5,
+                recipient: trader1
+            })
+        );
         vm.prank(trader1);
-        matchingEngine.marketSellETH{value: 1e18}(address(token1), true, 5, trader1, 2000000);
+        matchingEngine.createOrder{value: 1e18}(
+            IMatchingEngine.CreateOrderInput({
+                base: matchingEngine.WETH(),
+                quote: address(token1),
+                isBid: false,
+                isLimit: false,
+                orderId: 0,
+                price: 0,
+                amount: 1e18,
+                n: 5,
+                recipient: trader1,
+                isMaker: true,
+                slippageLimit: 2000000,
+                deadline: 0
+            })
+        );
         vm.prank(trader1);
         token1.approve(address(matchingEngine), 10e18);
         vm.prank(trader1);
-        matchingEngine.marketBuy(address(weth), address(token1), 1e18, true, 5, trader1, 2000000);
+        matchingEngine.marketBuy(
+            IMatchingEngine.MarketOrderInput({
+                base: address(weth),
+                quote: address(token1),
+                amount: 1e18,
+                isMaker: true,
+                n: 5,
+                recipient: trader1,
+                slippageLimit: 2000000
+            })
+        );
         console.log("weth balance");
         console.log(trader1.balance / 1e18);
     }
@@ -68,13 +138,43 @@ contract MarketOrderTest is BaseSetup {
 
         // deposit 10000e18(9990e18 after fee) for buying token1 for 1000 token2 * amount
         vm.prank(trader1);
-        matchingEngine.limitSell(address(token1), address(token2), 1000e8, 1000e18, true, 5, trader1);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 1000e8,
+                amount: 1000e18,
+                isMaker: true,
+                n: 5,
+                recipient: trader1
+            })
+        );
 
         vm.prank(trader1);
-        matchingEngine.limitSell(address(token1), address(token2), 1100e8, 1000e18, true, 5, trader1);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 1100e8,
+                amount: 1000e18,
+                isMaker: true,
+                n: 5,
+                recipient: trader1
+            })
+        );
 
         vm.prank(trader1);
-        matchingEngine.limitSell(address(token1), address(token2), 1200e8, 1000e18, true, 5, trader1);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 1200e8,
+                amount: 1000e18,
+                isMaker: true,
+                n: 5,
+                recipient: trader1
+            })
+        );
 
         vm.prank(trader1);
         matchingEngine.cancelOrder(address(token1), address(token2), false, 1);
@@ -85,14 +185,15 @@ contract MarketOrderTest is BaseSetup {
 
         vm.prank(trader1);
         matchingEngine.marketBuy(
-            address(token1),
-            address(token2),
-            //1400e8,
-            3400000e18,
-            true,
-            5,
-            trader1,
-            2000000
+            IMatchingEngine.MarketOrderInput({
+                base: address(token1),
+                quote: address(token2), //1400e8,
+                amount: 3400000e18,
+                isMaker: true,
+                n: 5,
+                recipient: trader1,
+                slippageLimit: 2000000
+            })
         );
 
         console.log("Mkt Price: ", matchingEngine.mktPrice(address(token1), address(token2)));
@@ -193,8 +294,28 @@ contract MarketOrderTest is BaseSetup {
         base.approve(address(matchingEngine), type(uint256).max);
         quote.approve(address(matchingEngine), type(uint256).max);
         // make last matched price
-        matchingEngine.limitBuy(address(base), address(quote), 1e8, 1e18, true, 2, trader1);
-        matchingEngine.limitSell(address(base), address(quote), 1e8, 1e18, true, 2, trader1);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(base),
+                quote: address(quote),
+                price: 1e8,
+                amount: 1e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(base),
+                quote: address(quote),
+                price: 1e8,
+                amount: 1e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
         mp = matchingEngine.mktPrice(address(base), address(quote));
         up = (mp * (1e8 + 2000000)) / 1e8;
         down = (mp * (1e8 - 2000000)) / 1e8;
@@ -211,7 +332,17 @@ contract MarketOrderTest is BaseSetup {
             uint256 up,
             uint256 _down // silence warning
         ) = _setupVolatilityTest();
-        matchingEngine.limitSell(address(base), address(quote), 1e11, 1e18, true, 2, trader1);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(base),
+                quote: address(quote),
+                price: 1e11,
+                amount: 1e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
         // get pair and price info
         book = Orderbook(payable(matchingEngine.getPair(address(base), address(quote))));
         (uint256 bidHead, uint256 askHead) = book.heads();
@@ -222,7 +353,17 @@ contract MarketOrderTest is BaseSetup {
         // check computed result
         assert(result == up);
         IMatchingEngine.OrderResult memory orderResult =
-            matchingEngine.marketBuy(address(base), address(quote), 1e8, true, 5, trader1, 2000000);
+            matchingEngine.marketBuy(
+                IMatchingEngine.MarketOrderInput({
+                    base: address(base),
+                    quote: address(quote),
+                    amount: 1e8,
+                    isMaker: true,
+                    n: 5,
+                    recipient: trader1,
+                    slippageLimit: 2000000
+                })
+            );
         // check make price is equal to computed result
         console.log("make price: ", orderResult.makePrice);
         assert(orderResult.makePrice == result);
@@ -238,7 +379,17 @@ contract MarketOrderTest is BaseSetup {
             uint256 up,
             uint256 _down /* silence warning */
         ) = _setupVolatilityTest();
-        matchingEngine.limitBuy(address(base), address(quote), 1e6, 1e18, true, 2, trader1);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(base),
+                quote: address(quote),
+                price: 1e6,
+                amount: 1e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
         // get pair and price info
         // get pair and price info
         book = Orderbook(payable(matchingEngine.getPair(address(base), address(quote))));
@@ -250,7 +401,17 @@ contract MarketOrderTest is BaseSetup {
         // check computed result
         assert(result == up);
         IMatchingEngine.OrderResult memory orderResult =
-            matchingEngine.marketBuy(address(base), address(quote), 1e8, true, 5, trader1, 2000000);
+            matchingEngine.marketBuy(
+                IMatchingEngine.MarketOrderInput({
+                    base: address(base),
+                    quote: address(quote),
+                    amount: 1e8,
+                    isMaker: true,
+                    n: 5,
+                    recipient: trader1,
+                    slippageLimit: 2000000
+                })
+            );
         // check make price is equal to computed result
         console.log("make price: ", orderResult.makePrice);
         assert(orderResult.makePrice == result);
@@ -260,7 +421,17 @@ contract MarketOrderTest is BaseSetup {
     function testMarketBuyVolatilityUp3() public {
         (MockBase base, MockQuote quote, Orderbook book, uint256 _mp, uint256 up, uint256 _down) =
             _setupVolatilityTest();
-        matchingEngine.limitSell(address(base), address(quote), 1e8 + 1, 1e18, true, 2, trader1);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(base),
+                quote: address(quote),
+                price: 1e8 + 1,
+                amount: 1e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
         // get pair and price info
         // get pair and price info
         book = Orderbook(payable(matchingEngine.getPair(address(base), address(quote))));
@@ -272,7 +443,17 @@ contract MarketOrderTest is BaseSetup {
         // check computed result
         assert(result == askHead);
         IMatchingEngine.OrderResult memory orderResult =
-            matchingEngine.marketBuy(address(base), address(quote), 1e8, true, 5, trader1, 2000000);
+            matchingEngine.marketBuy(
+                IMatchingEngine.MarketOrderInput({
+                    base: address(base),
+                    quote: address(quote),
+                    amount: 1e8,
+                    isMaker: true,
+                    n: 5,
+                    recipient: trader1,
+                    slippageLimit: 2000000
+                })
+            );
         // check make price is equal to computed result
         console.log("make price: ", orderResult.makePrice);
         assert(orderResult.makePrice == result);
@@ -282,8 +463,28 @@ contract MarketOrderTest is BaseSetup {
     function testMarketBuyVolatilityUp4() public {
         (MockBase base, MockQuote quote, Orderbook book, uint256 _mp, uint256 up, uint256 _down) =
             _setupVolatilityTest();
-        matchingEngine.limitBuy(address(base), address(quote), 1e6, 1e18, true, 2, trader1);
-        matchingEngine.limitSell(address(base), address(quote), 1e8 + 1, 1e18, true, 2, trader1);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(base),
+                quote: address(quote),
+                price: 1e6,
+                amount: 1e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(base),
+                quote: address(quote),
+                price: 1e8 + 1,
+                amount: 1e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
         // get pair and price info
         // get pair and price info
         book = Orderbook(payable(matchingEngine.getPair(address(base), address(quote))));
@@ -295,7 +496,17 @@ contract MarketOrderTest is BaseSetup {
         // check computed result
         assert(result == askHead);
         IMatchingEngine.OrderResult memory orderResult =
-            matchingEngine.marketBuy(address(base), address(quote), 1e8, true, 5, trader1, 2000000);
+            matchingEngine.marketBuy(
+                IMatchingEngine.MarketOrderInput({
+                    base: address(base),
+                    quote: address(quote),
+                    amount: 1e8,
+                    isMaker: true,
+                    n: 5,
+                    recipient: trader1,
+                    slippageLimit: 2000000
+                })
+            );
         // check make price is equal to computed result
         console.log("make price: ", orderResult.makePrice);
         assert(orderResult.makePrice == result);
@@ -310,7 +521,17 @@ contract MarketOrderTest is BaseSetup {
             uint256 up,
             uint256 _down /* silence warning */
         ) = _setupVolatilityTest();
-        matchingEngine.limitBuy(address(base), address(quote), 1e6, 1e18, true, 2, trader1);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(base),
+                quote: address(quote),
+                price: 1e6,
+                amount: 1e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
         // get pair and price info
         // get pair and price info
         book = Orderbook(payable(matchingEngine.getPair(address(base), address(quote))));
@@ -322,7 +543,17 @@ contract MarketOrderTest is BaseSetup {
         // check computed result
         assert(result == 100500000);
         IMatchingEngine.OrderResult memory orderResult =
-            matchingEngine.marketBuy(address(base), address(quote), 1e8, true, 5, trader1, 500000);
+            matchingEngine.marketBuy(
+                IMatchingEngine.MarketOrderInput({
+                    base: address(base),
+                    quote: address(quote),
+                    amount: 1e8,
+                    isMaker: true,
+                    n: 5,
+                    recipient: trader1,
+                    slippageLimit: 500000
+                })
+            );
         // check make price is equal to computed result
         console.log("make price: ", orderResult.makePrice);
         assert(orderResult.makePrice == result);
@@ -337,7 +568,17 @@ contract MarketOrderTest is BaseSetup {
             uint256 up,
             uint256 _down /* silence warning */
         ) = _setupVolatilityTest();
-        matchingEngine.limitBuy(address(base), address(quote), 1e6, 1e18, true, 2, trader1);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(base),
+                quote: address(quote),
+                price: 1e6,
+                amount: 1e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
         // get pair and price info
         // get pair and price info
         book = Orderbook(payable(matchingEngine.getPair(address(base), address(quote))));
@@ -349,7 +590,17 @@ contract MarketOrderTest is BaseSetup {
         // check computed result
         assert(result == up);
         IMatchingEngine.OrderResult memory orderResult =
-            matchingEngine.marketBuy(address(base), address(quote), 1e8, true, 5, trader1, 3000000);
+            matchingEngine.marketBuy(
+                IMatchingEngine.MarketOrderInput({
+                    base: address(base),
+                    quote: address(quote),
+                    amount: 1e8,
+                    isMaker: true,
+                    n: 5,
+                    recipient: trader1,
+                    slippageLimit: 3000000
+                })
+            );
         // check make price is equal to computed result
         console.log("make price: ", orderResult.makePrice);
         assert(orderResult.makePrice == result);
@@ -358,7 +609,17 @@ contract MarketOrderTest is BaseSetup {
     // On market buy, if askHead is lower than lmp + ranged price, order is made with askHead
     function testMarketBuyVolatilityDown() public {
         (MockBase base, MockQuote quote, Orderbook book, uint256 mp, uint256 up, uint256 _down) = _setupVolatilityTest();
-        matchingEngine.limitSell(address(base), address(quote), (mp * (1e8 + 100)) / 1e8, 1e18, true, 2, trader1);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(base),
+                quote: address(quote),
+                price: (mp * (1e8 + 100)) / 1e8,
+                amount: 1e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
         // get pair and price info
         book = Orderbook(payable(matchingEngine.getPair(address(base), address(quote))));
         (uint256 bidHead, uint256 askHead) = book.heads();
@@ -369,7 +630,17 @@ contract MarketOrderTest is BaseSetup {
         // check computed result
         assert(result == askHead);
         IMatchingEngine.OrderResult memory orderResult =
-            matchingEngine.marketBuy(address(base), address(quote), 1e8, true, 5, trader1, 2000000);
+            matchingEngine.marketBuy(
+                IMatchingEngine.MarketOrderInput({
+                    base: address(base),
+                    quote: address(quote),
+                    amount: 1e8,
+                    isMaker: true,
+                    n: 5,
+                    recipient: trader1,
+                    slippageLimit: 2000000
+                })
+            );
         // check make price is equal to computed result
         console.log("make price: ", orderResult.makePrice);
         assert(orderResult.makePrice == result);
@@ -379,7 +650,17 @@ contract MarketOrderTest is BaseSetup {
     function testMarketSellVolatilityDown1() public {
         (MockBase base, MockQuote quote, Orderbook book, uint256 _mp, uint256 _up, uint256 down) =
             _setupVolatilityTest();
-        matchingEngine.limitBuy(address(base), address(quote), 1e6, 1e18, true, 2, trader1);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(base),
+                quote: address(quote),
+                price: 1e6,
+                amount: 1e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
         // get pair and price info
         book = Orderbook(payable(matchingEngine.getPair(address(base), address(quote))));
         (uint256 bidHead, uint256 askHead) = book.heads();
@@ -390,7 +671,17 @@ contract MarketOrderTest is BaseSetup {
         // check computed result
         assert(result == down);
         IMatchingEngine.OrderResult memory orderResult =
-            matchingEngine.marketSell(address(base), address(quote), 1e8, true, 5, trader1, 2000000);
+            matchingEngine.marketSell(
+                IMatchingEngine.MarketOrderInput({
+                    base: address(base),
+                    quote: address(quote),
+                    amount: 1e8,
+                    isMaker: true,
+                    n: 5,
+                    recipient: trader1,
+                    slippageLimit: 2000000
+                })
+            );
         // check make price is equal to computed result
         console.log("make price: ", orderResult.makePrice);
         assert(orderResult.makePrice == result);
@@ -400,7 +691,17 @@ contract MarketOrderTest is BaseSetup {
     function testMarketSellVolatilityDown2() public {
         (MockBase base, MockQuote quote, Orderbook book, uint256 _mp, uint256 _up, uint256 down) =
             _setupVolatilityTest();
-        matchingEngine.limitBuy(address(base), address(quote), 1e6, 1e18, true, 2, trader1);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(base),
+                quote: address(quote),
+                price: 1e6,
+                amount: 1e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
         // get pair and price info
         book = Orderbook(payable(matchingEngine.getPair(address(base), address(quote))));
         (uint256 bidHead, uint256 askHead) = book.heads();
@@ -411,7 +712,17 @@ contract MarketOrderTest is BaseSetup {
         // check computed result
         assert(result == down);
         IMatchingEngine.OrderResult memory orderResult =
-            matchingEngine.marketSell(address(base), address(quote), 1e8, true, 5, trader1, 2000000);
+            matchingEngine.marketSell(
+                IMatchingEngine.MarketOrderInput({
+                    base: address(base),
+                    quote: address(quote),
+                    amount: 1e8,
+                    isMaker: true,
+                    n: 5,
+                    recipient: trader1,
+                    slippageLimit: 2000000
+                })
+            );
         // check make price is equal to computed result
         console.log("make price: ", orderResult.makePrice);
         assert(orderResult.makePrice == result);
@@ -420,7 +731,17 @@ contract MarketOrderTest is BaseSetup {
     // On market sell, if bidHead is higher than lmp - ranged price, order is made with bidHead
     function testMarketSellVolatilityDown3() public {
         (MockBase base, MockQuote quote, Orderbook book, uint256 mp, uint256 _up, uint256 down) = _setupVolatilityTest();
-        matchingEngine.limitBuy(address(base), address(quote), (mp * (1e8 - 100)) / 1e8, 1e18, true, 2, trader1);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(base),
+                quote: address(quote),
+                price: (mp * (1e8 - 100)) / 1e8,
+                amount: 1e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
         // get pair and price info
         book = Orderbook(payable(matchingEngine.getPair(address(base), address(quote))));
         (uint256 bidHead, uint256 askHead) = book.heads();
@@ -431,7 +752,17 @@ contract MarketOrderTest is BaseSetup {
         // check computed result
         assert(result == bidHead);
         IMatchingEngine.OrderResult memory orderResult = matchingEngine // silence warning
-            .marketSell(address(base), address(quote), 1e8, true, 5, trader1, 2000000);
+            .marketSell(
+                IMatchingEngine.MarketOrderInput({
+                    base: address(base),
+                    quote: address(quote),
+                    amount: 1e8,
+                    isMaker: true,
+                    n: 5,
+                    recipient: trader1,
+                    slippageLimit: 2000000
+                })
+            );
         // check make price is equal to computed result
         console.log("make price: ", orderResult.makePrice);
         assert(orderResult.makePrice == result);
@@ -440,7 +771,17 @@ contract MarketOrderTest is BaseSetup {
     function testMarketSellVolatilityDownOnSlippageLimit() public {
         (MockBase base, MockQuote quote, Orderbook book, uint256 _mp, uint256 _up, uint256 down) =
             _setupVolatilityTest();
-        matchingEngine.limitBuy(address(base), address(quote), 1e6, 1e18, true, 2, trader1);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(base),
+                quote: address(quote),
+                price: 1e6,
+                amount: 1e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
         // get pair and price info
         book = Orderbook(payable(matchingEngine.getPair(address(base), address(quote))));
         (uint256 bidHead, uint256 askHead) = book.heads();
@@ -451,7 +792,17 @@ contract MarketOrderTest is BaseSetup {
         // check computed result with user input with 50bps down
         assert(result == 99500000);
         IMatchingEngine.OrderResult memory orderResult =
-            matchingEngine.marketSell(address(base), address(quote), 1e8, true, 5, trader1, 500000);
+            matchingEngine.marketSell(
+                IMatchingEngine.MarketOrderInput({
+                    base: address(base),
+                    quote: address(quote),
+                    amount: 1e8,
+                    isMaker: true,
+                    n: 5,
+                    recipient: trader1,
+                    slippageLimit: 500000
+                })
+            );
         // check make price is equal to computed result
         console.log("make price: ", orderResult.makePrice);
         assert(orderResult.makePrice == result);
@@ -460,7 +811,17 @@ contract MarketOrderTest is BaseSetup {
     function testMarketSellVolatilityDownOnSlippageLimit2() public {
         (MockBase base, MockQuote quote, Orderbook book, uint256 _mp, uint256 _up, uint256 down) =
             _setupVolatilityTest();
-        matchingEngine.limitBuy(address(base), address(quote), 1e6, 1e18, true, 2, trader1);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(base),
+                quote: address(quote),
+                price: 1e6,
+                amount: 1e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
         // get pair and price info
         book = Orderbook(payable(matchingEngine.getPair(address(base), address(quote))));
         (uint256 bidHead, uint256 askHead) = book.heads();
@@ -471,7 +832,17 @@ contract MarketOrderTest is BaseSetup {
         // check computed result with user input with 50bps down
         assert(result == down);
         IMatchingEngine.OrderResult memory orderResult =
-            matchingEngine.marketSell(address(base), address(quote), 1e8, true, 5, trader1, 3000000);
+            matchingEngine.marketSell(
+                IMatchingEngine.MarketOrderInput({
+                    base: address(base),
+                    quote: address(quote),
+                    amount: 1e8,
+                    isMaker: true,
+                    n: 5,
+                    recipient: trader1,
+                    slippageLimit: 3000000
+                })
+            );
         // check make price is equal to computed result
         console.log("make price: ", orderResult.makePrice);
         assert(orderResult.makePrice == result);
@@ -487,7 +858,17 @@ contract MarketOrderTest is BaseSetup {
         (uint256 _bidHead, uint256 _askHead) = book.heads();
         uint256 beforeB = quote.balanceOf(address(trader1));
         IMatchingEngine.OrderResult memory orderResult = matchingEngine // silence warning
-            .marketSell(address(base), address(quote), 1e8, false, 5, trader1, 2000000);
+            .marketSell(
+                IMatchingEngine.MarketOrderInput({
+                    base: address(base),
+                    quote: address(quote),
+                    amount: 1e8,
+                    isMaker: false,
+                    n: 5,
+                    recipient: trader1,
+                    slippageLimit: 2000000
+                })
+            );
         uint256 afterB = quote.balanceOf(address(trader1));
         // check make price is equal to computed result
         console.log("make price: ", orderResult.makePrice);
@@ -512,7 +893,17 @@ contract MarketOrderTest is BaseSetup {
         (uint256 _bidHead, uint256 _askHead) = bookBefore.heads(); // silence warning
         uint256 beforeB = quote.balanceOf(address(trader1));
         IMatchingEngine.OrderResult memory orderResult = matchingEngine // silence warning
-            .marketBuy(address(base), address(quote), 1e8, false, 5, trader1, 2000000);
+            .marketBuy(
+                IMatchingEngine.MarketOrderInput({
+                    base: address(base),
+                    quote: address(quote),
+                    amount: 1e8,
+                    isMaker: false,
+                    n: 5,
+                    recipient: trader1,
+                    slippageLimit: 2000000
+                })
+            );
         Orderbook bookAfter = Orderbook(payable(matchingEngine.getPair(address(base), address(quote))));
         uint256 afterB = quote.balanceOf(address(trader1));
         // check make price is equal to computed result
@@ -533,8 +924,28 @@ contract MarketOrderTest is BaseSetup {
             uint256 _up, /* silence warning */
             uint256 down
         ) = _setupVolatilityTest();
-        matchingEngine.limitBuy(address(base), address(quote), 1e8 - 1, 1e18, true, 2, trader1);
-        matchingEngine.limitSell(address(base), address(quote), 1e10, 1e18, true, 2, trader1);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(base),
+                quote: address(quote),
+                price: 1e8 - 1,
+                amount: 1e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(base),
+                quote: address(quote),
+                price: 1e10,
+                amount: 1e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
         // get pair and price info
         book = Orderbook(payable(matchingEngine.getPair(address(base), address(quote))));
         (uint256 bidHead, uint256 askHead) = book.heads();
@@ -544,8 +955,18 @@ contract MarketOrderTest is BaseSetup {
         console.log("result: ", result);
         // check computed result
         assert(result == bidHead);
-        IMatchingEngine.OrderResult memory orderResult = matchingEngine.marketSell( // silence warning
-        address(base), address(quote), 1e8, true, 5, trader1, 2000000);
+        IMatchingEngine.OrderResult memory orderResult = matchingEngine.marketSell(
+            IMatchingEngine.MarketOrderInput({
+                // silence warning
+                base: address(base),
+                quote: address(quote),
+                amount: 1e8,
+                isMaker: true,
+                n: 5,
+                recipient: trader1,
+                slippageLimit: 2000000
+            })
+        );
         // check make price is equal to computed result
         console.log("make price: ", orderResult.makePrice);
         assert(orderResult.makePrice == result);
@@ -562,9 +983,29 @@ contract MarketOrderTest is BaseSetup {
         vm.startPrank(trader1);
         base.approve(address(matchingEngine), type(uint256).max);
         quote.approve(address(matchingEngine), type(uint256).max);
-        matchingEngine.marketBuy(address(base), address(quote), 100000, true, 5, trader1, 2000000);
+        matchingEngine.marketBuy(
+            IMatchingEngine.MarketOrderInput({
+                base: address(base),
+                quote: address(quote),
+                amount: 100000,
+                isMaker: true,
+                n: 5,
+                recipient: trader1,
+                slippageLimit: 2000000
+            })
+        );
 
-        matchingEngine.marketSell(address(base), address(quote), 1e14, true, 5, trader1, 2000000);
+        matchingEngine.marketSell(
+            IMatchingEngine.MarketOrderInput({
+                base: address(base),
+                quote: address(quote),
+                amount: 1e14,
+                isMaker: true,
+                n: 5,
+                recipient: trader1,
+                slippageLimit: 2000000
+            })
+        );
     }
 
     function testMarketBuyAndSell2() public {
@@ -578,8 +1019,28 @@ contract MarketOrderTest is BaseSetup {
         vm.startPrank(trader1);
         btc.approve(address(matchingEngine), type(uint256).max);
         quote.approve(address(matchingEngine), type(uint256).max);
-        matchingEngine.marketBuy(address(btc), address(quote), 9e18, true, 5, trader1, 2000000);
+        matchingEngine.marketBuy(
+            IMatchingEngine.MarketOrderInput({
+                base: address(btc),
+                quote: address(quote),
+                amount: 9e18,
+                isMaker: true,
+                n: 5,
+                recipient: trader1,
+                slippageLimit: 2000000
+            })
+        );
 
-        matchingEngine.marketSell(address(btc), address(quote), 1e14, true, 5, trader1, 2000000);
+        matchingEngine.marketSell(
+            IMatchingEngine.MarketOrderInput({
+                base: address(btc),
+                quote: address(quote),
+                amount: 1e14,
+                isMaker: true,
+                n: 5,
+                recipient: trader1,
+                slippageLimit: 2000000
+            })
+        );
     }
 }

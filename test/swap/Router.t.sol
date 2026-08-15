@@ -89,7 +89,15 @@ contract RouterTest is PoolBaseSetup {
 
         vm.recordLogs();
         vm.prank(lp1);
-        router.removeLiquidity(address(pm), tokenId, 200e18, 200e18, lp1);
+        router.removeLiquidity(
+            ISwapRouter.RemoveLiquidityInput({
+                positionManager: address(pm),
+                tokenId: tokenId,
+                baseAmount: 200e18,
+                quoteAmount: 200e18,
+                recipient: lp1
+            })
+        );
         Vm.Log[] memory logs = vm.getRecordedLogs();
 
         assertEq(token1.balanceOf(lp1), lp1Token1Before + 200e18);
@@ -126,7 +134,15 @@ contract RouterTest is PoolBaseSetup {
         uint256 lp1Token1Before = token1.balanceOf(lp1);
 
         vm.prank(trader1);
-        router.removeLiquidity(address(pm), tokenId, 100e18, 100e18, lp1);
+        router.removeLiquidity(
+            ISwapRouter.RemoveLiquidityInput({
+                positionManager: address(pm),
+                tokenId: tokenId,
+                baseAmount: 100e18,
+                quoteAmount: 100e18,
+                recipient: lp1
+            })
+        );
 
         assertEq(token1.balanceOf(lp1), lp1Token1Before + 100e18);
     }
@@ -145,7 +161,15 @@ contract RouterTest is PoolBaseSetup {
         // drain someone else's position just because the router itself is a trusted forwarder.
         vm.prank(trader2);
         vm.expectRevert(abi.encodeWithSelector(IPositionManager.NotOwnerOrApproved.selector, tokenId, trader2));
-        router.removeLiquidity(address(pm), tokenId, 100e18, 100e18, trader2);
+        router.removeLiquidity(
+            ISwapRouter.RemoveLiquidityInput({
+                positionManager: address(pm),
+                tokenId: tokenId,
+                baseAmount: 100e18,
+                quoteAmount: 100e18,
+                recipient: trader2
+            })
+        );
     }
 
     function testRemoveLiquidityForRevertsWhenNotCalledByRouter() public {
@@ -188,7 +212,16 @@ contract RouterTest is PoolBaseSetup {
         path[1] = address(token1);
 
         vm.prank(trader1);
-        uint256 amountOut = router.swap(path, 100e18, 0, trader1, ISwapRouter.RemainderMode.Refund, empty);
+        uint256 amountOut = router.swap(
+            ISwapRouter.SwapInput({
+                path: path,
+                amountIn: 100e18,
+                minAmountOut: 0,
+                recipient: trader1,
+                remainderMode: ISwapRouter.RemainderMode.Refund,
+                remainderConfig: empty
+            })
+        );
 
         assertGt(amountOut, 0);
         assertGt(token1.balanceOf(trader1), 0);
@@ -204,7 +237,16 @@ contract RouterTest is PoolBaseSetup {
 
         vm.recordLogs();
         vm.prank(trader1);
-        uint256 amountOut = router.swap(path, 100e18, 0, trader1, ISwapRouter.RemainderMode.Refund, empty);
+        uint256 amountOut = router.swap(
+            ISwapRouter.SwapInput({
+                path: path,
+                amountIn: 100e18,
+                minAmountOut: 0,
+                recipient: trader1,
+                remainderMode: ISwapRouter.RemainderMode.Refund,
+                remainderConfig: empty
+            })
+        );
         Vm.Log[] memory logs = vm.getRecordedLogs();
 
         Vm.Log memory hopLog = _findLog(
@@ -244,7 +286,16 @@ contract RouterTest is PoolBaseSetup {
 
         vm.recordLogs();
         vm.prank(trader1);
-        uint256 amountOut = router.swap(path, 50e18, 0, trader1, ISwapRouter.RemainderMode.Refund, empty);
+        uint256 amountOut = router.swap(
+            ISwapRouter.SwapInput({
+                path: path,
+                amountIn: 50e18,
+                minAmountOut: 0,
+                recipient: trader1,
+                remainderMode: ISwapRouter.RemainderMode.Refund,
+                remainderConfig: empty
+            })
+        );
         Vm.Log[] memory logs = vm.getRecordedLogs();
 
         bytes32 hopSig = keccak256("HopExecuted(address,address,address,uint256,uint256,uint256)");
@@ -273,7 +324,16 @@ contract RouterTest is PoolBaseSetup {
 
         vm.prank(trader1);
         vm.expectRevert();
-        router.swap(path, 100e18, type(uint256).max, trader1, ISwapRouter.RemainderMode.Refund, empty);
+        router.swap(
+            ISwapRouter.SwapInput({
+                path: path,
+                amountIn: 100e18,
+                minAmountOut: type(uint256).max,
+                recipient: trader1,
+                remainderMode: ISwapRouter.RemainderMode.Refund,
+                remainderConfig: empty
+            })
+        );
     }
 
     function testSwapRevertsForUnknownPool() public {
@@ -290,7 +350,16 @@ contract RouterTest is PoolBaseSetup {
 
         vm.prank(trader1);
         vm.expectRevert(abi.encodeWithSelector(ISwapRouter.PoolDoesNotExist.selector, address(token2), address(0xDEAD)));
-        router.swap(path, 100e18, 0, trader1, ISwapRouter.RemainderMode.Refund, empty);
+        router.swap(
+            ISwapRouter.SwapInput({
+                path: path,
+                amountIn: 100e18,
+                minAmountOut: 0,
+                recipient: trader1,
+                remainderMode: ISwapRouter.RemainderMode.Refund,
+                remainderConfig: empty
+            })
+        );
     }
 
     function testMultiHopSwapChainsThroughTwoPools() public {
@@ -305,7 +374,16 @@ contract RouterTest is PoolBaseSetup {
         path[2] = address(token3);
 
         vm.prank(trader1);
-        uint256 amountOut = router.swap(path, 50e18, 0, trader1, ISwapRouter.RemainderMode.Refund, empty);
+        uint256 amountOut = router.swap(
+            ISwapRouter.SwapInput({
+                path: path,
+                amountIn: 50e18,
+                minAmountOut: 0,
+                recipient: trader1,
+                remainderMode: ISwapRouter.RemainderMode.Refund,
+                remainderConfig: empty
+            })
+        );
 
         assertGt(amountOut, 0);
         assertGt(token3.balanceOf(trader1), 0);
@@ -339,7 +417,16 @@ contract RouterTest is PoolBaseSetup {
         uint256 traderQuoteBefore = token2.balanceOf(trader1);
 
         vm.prank(trader1);
-        uint256 amountOut = router.swap(path, 1000e18, 0, trader1, ISwapRouter.RemainderMode.Refund, empty);
+        uint256 amountOut = router.swap(
+            ISwapRouter.SwapInput({
+                path: path,
+                amountIn: 1000e18,
+                minAmountOut: 0,
+                recipient: trader1,
+                remainderMode: ISwapRouter.RemainderMode.Refund,
+                remainderConfig: empty
+            })
+        );
 
         // The route completed: hop 2 matched hop 1's real 5e18 base output into token3.
         assertGt(amountOut, 0);
@@ -364,7 +451,16 @@ contract RouterTest is PoolBaseSetup {
         uint256 traderQuoteBefore = token2.balanceOf(trader1);
 
         vm.prank(trader1);
-        uint256 amountOut = router.swap(path, 1000e18, 0, trader1, ISwapRouter.RemainderMode.RestAsOrder, empty);
+        uint256 amountOut = router.swap(
+            ISwapRouter.SwapInput({
+                path: path,
+                amountIn: 1000e18,
+                minAmountOut: 0,
+                recipient: trader1,
+                remainderMode: ISwapRouter.RemainderMode.RestAsOrder,
+                remainderConfig: empty
+            })
+        );
 
         assertGt(amountOut, 0);
         assertGt(token3.balanceOf(trader1), 0);
@@ -395,7 +491,16 @@ contract RouterTest is PoolBaseSetup {
         uint256 traderQuoteBefore = token2.balanceOf(trader1);
 
         vm.prank(trader1);
-        uint256 amountOut = router.swap(path, 1000e18, 0, trader1, ISwapRouter.RemainderMode.Refund, empty);
+        uint256 amountOut = router.swap(
+            ISwapRouter.SwapInput({
+                path: path,
+                amountIn: 1000e18,
+                minAmountOut: 0,
+                recipient: trader1,
+                remainderMode: ISwapRouter.RemainderMode.Refund,
+                remainderConfig: empty
+            })
+        );
 
         // The shrunk position had exactly 5e18 base available and all of it was consumed --
         // not merely "at most 5e18", the full available amount -- minus the taker fee applied
@@ -426,7 +531,16 @@ contract RouterTest is PoolBaseSetup {
         uint256 traderQuoteBefore = token2.balanceOf(trader1);
 
         vm.prank(trader1);
-        uint256 amountOut = router.swap(path, 1000e18, 0, trader1, ISwapRouter.RemainderMode.RestAsOrder, empty);
+        uint256 amountOut = router.swap(
+            ISwapRouter.SwapInput({
+                path: path,
+                amountIn: 1000e18,
+                minAmountOut: 0,
+                recipient: trader1,
+                remainderMode: ISwapRouter.RemainderMode.RestAsOrder,
+                remainderConfig: empty
+            })
+        );
 
         uint32 takerFeeRate = matchingEngine.feeOf(address(token1), address(token2), address(router), false);
         uint256 fee = (uint256(5e18) * uint256(takerFeeRate)) / matchingEngine.DENOM();
@@ -480,7 +594,16 @@ contract RouterTest is PoolBaseSetup {
 
         vm.recordLogs();
         vm.prank(trader1);
-        uint256 amountOut = router.swap(path, 1000e18, 0, trader1, ISwapRouter.RemainderMode.DepositToLP, cfg);
+        uint256 amountOut = router.swap(
+            ISwapRouter.SwapInput({
+                path: path,
+                amountIn: 1000e18,
+                minAmountOut: 0,
+                recipient: trader1,
+                remainderMode: ISwapRouter.RemainderMode.DepositToLP,
+                remainderConfig: cfg
+            })
+        );
         Vm.Log[] memory logs = vm.getRecordedLogs();
 
         uint32 takerFeeRate = matchingEngine.feeOf(address(token1), address(token4), address(router), false);

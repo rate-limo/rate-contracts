@@ -147,7 +147,16 @@ contract DeploymentWiringTest is Test {
 
         vm.startPrank(trader);
         quote.approve(address(router), 100e18);
-        uint256 out = router.swap(_path(), 100e18, 0, trader, ISwapRouter.RemainderMode.Refund, cfg);
+        uint256 out = router.swap(
+            ISwapRouter.SwapInput({
+                path: _path(),
+                amountIn: 100e18,
+                minAmountOut: 0,
+                recipient: trader,
+                remainderMode: ISwapRouter.RemainderMode.Refund,
+                remainderConfig: cfg
+            })
+        );
         vm.stopPrank();
 
         assertGt(out, 0, "the swap filled");
@@ -170,7 +179,16 @@ contract DeploymentWiringTest is Test {
         vm.startPrank(trader);
         quote.approve(address(router), 100e18);
         vm.expectRevert(abi.encodeWithSelector(IPool.NotRouter.selector, address(router), address(0)));
-        router.swap(_path(), 100e18, 0, trader, ISwapRouter.RemainderMode.Refund, cfg);
+        router.swap(
+            ISwapRouter.SwapInput({
+                path: _path(),
+                amountIn: 100e18,
+                minAmountOut: 0,
+                recipient: trader,
+                remainderMode: ISwapRouter.RemainderMode.Refund,
+                remainderConfig: cfg
+            })
+        );
         vm.stopPrank();
     }
 
@@ -186,7 +204,16 @@ contract DeploymentWiringTest is Test {
         ISwapRouter.RemainderConfig memory cfg;
         vm.startPrank(trader);
         quote.approve(address(router), 100e18);
-        uint256 out = router.swap(_path(), 100e18, 0, trader, ISwapRouter.RemainderMode.Refund, cfg);
+        uint256 out = router.swap(
+            ISwapRouter.SwapInput({
+                path: _path(),
+                amountIn: 100e18,
+                minAmountOut: 0,
+                recipient: trader,
+                remainderMode: ISwapRouter.RemainderMode.Refund,
+                remainderConfig: cfg
+            })
+        );
         vm.stopPrank();
 
         assertGt(out, 0, "recovered without redeploying anything");
@@ -208,7 +235,16 @@ contract DeploymentWiringTest is Test {
         ISwapRouter.RemainderConfig memory cfg;
         vm.startPrank(trader);
         quote.approve(address(router), 105e18);
-        uint256 out = router.swap(_path(), 105e18, 0, trader, ISwapRouter.RemainderMode.Refund, cfg);
+        uint256 out = router.swap(
+            ISwapRouter.SwapInput({
+                path: _path(),
+                amountIn: 105e18,
+                minAmountOut: 0,
+                recipient: trader,
+                remainderMode: ISwapRouter.RemainderMode.Refund,
+                remainderConfig: cfg
+            })
+        );
         vm.stopPrank();
 
         uint256 impliedFill = (105e18 * 1e8) / out;

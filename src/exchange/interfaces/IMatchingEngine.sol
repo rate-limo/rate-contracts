@@ -55,6 +55,20 @@ interface IMatchingEngine {
         uint32 orderId;
     }
 
+    /**
+     * @notice The single EOA-facing order input.
+     * @dev Passed as `calldata` from the frontend. This struct is the whole public
+     * order API: `isLimit` selects limit vs market, `isBid` selects buy vs sell, and
+     * a `base`/`quote` of WETH with matching `msg.value` selects the ETH path, so the
+     * scalar limitBuy/limitSell/marketBuy/marketSell overloads (and their ETH and
+     * WithDeadline variants) are all expressible here.
+     *
+     * The last three fields were added when this became the frontend's entry point:
+     * `_createOrder` previously hardcoded `isMaker = true` and used the venue default
+     * spread, so a caller could express neither a taker order nor its own slippage.
+     * They are appended rather than ordered by packing because a calldata struct pads
+     * every field to 32 bytes regardless — ordering here is diff size, not gas.
+     */
     struct CreateOrderInput {
         address base;
         address quote;
@@ -63,6 +77,50 @@ interface IMatchingEngine {
         uint32 orderId;
         uint256 price;
         uint256 amount;
+        uint32 n;
+        address recipient;
+        bool isMaker;
+        /// @dev Market orders only. Limit orders read the pair's spread instead.
+        uint32 slippageLimit;
+        /// @dev 0 means no deadline, matching the bare (non-WithDeadline) overloads.
+        uint64 deadline;
+    }
+
+    /**
+     * @notice One calldata struct per shape of order entry, matching `CreateOrderInput`.
+     * @dev These exist for the CALL SITE, not for the chain: a positional list of seven
+     * arguments, three of which are addresses and two of which are booleans, is a shape
+     * wagmi/viem callers get silently wrong — swap `isMaker` and the two 32-bit numbers and
+     * it still encodes. A named object cannot be mis-ordered.
+     *
+     * Neither carries a `deadline`, and that is a size decision as much as a design one.
+     * `createOrder` already expresses every shape of order INCLUDING a deadline
+     * (`isLimit` selects limit vs market, `isBid` selects side), so a deadline here would
+     * be a second path to a capability that already has a home. It is not free: wiring
+     * `_checkDeadline` + `orderDeadlineContext` through these four entrypoints measured
+     * **+331 bytes**, against 180 bytes of EIP-170 headroom. Deadline-bearing orders go
+     * through `createOrder`, which is where this branch already sends them.
+     *
+     * Field order follows main's shape rather than packing order: a calldata struct pads
+     * every field to 32 bytes regardless, so ordering here is diff size, not gas.
+     */
+    struct MarketOrderInput {
+        address base;
+        address quote;
+        uint256 amount;
+        bool isMaker;
+        uint32 n;
+        address recipient;
+        uint32 slippageLimit;
+    }
+
+    /// @dev Limit orders read the pair's spread, so there is no `slippageLimit` here.
+    struct LimitOrderInput {
+        address base;
+        address quote;
+        uint256 price;
+        uint256 amount;
+        bool isMaker;
         uint32 n;
         address recipient;
     }
@@ -128,101 +186,13 @@ interface IMatchingEngine {
         returns (address pair);
 
     // user functions
-    function marketBuy(
-        address base,
-        address quote,
-        uint256 quoteAmount,
-        bool isMaker,
-        uint32 n,
-        address recipient,
-        uint32 slippageLimit
-    ) external returns (OrderResult memory result);
+    function marketBuy(MarketOrderInput calldata input) external returns (OrderResult memory result);
 
-    function marketBuyWithDeadline(
-        address base, address quote, uint256 quoteAmount, bool isMaker, uint32 n,
-        address recipient, uint32 slippageLimit, uint64 deadline
-    ) external returns (OrderResult memory result);
+    function marketSell(MarketOrderInput calldata input) external returns (OrderResult memory result);
 
-    function marketSell(
-        address base,
-        address quote,
-        uint256 baseAmount,
-        bool isMaker,
-        uint32 n,
-        address recipient,
-        uint32 slippageLimit
-    ) external returns (OrderResult memory result);
+    function limitBuy(LimitOrderInput calldata input) external returns (OrderResult memory result);
 
-    function marketSellWithDeadline(
-        address base, address quote, uint256 baseAmount, bool isMaker, uint32 n,
-        address recipient, uint32 slippageLimit, uint64 deadline
-    ) external returns (OrderResult memory result);
-
-    function marketBuyETH(address base, bool isMaker, uint32 n, address recipient, uint32 slippageLimit)
-        external
-        payable
-        returns (OrderResult memory result);
-
-    function marketBuyETHWithDeadline(
-        address base, bool isMaker, uint32 n, address recipient, uint32 slippageLimit, uint64 deadline
-    ) external payable returns (OrderResult memory result);
-
-    function marketSellETH(address quote, bool isMaker, uint32 n, address recipient, uint32 slippageLimit)
-        external
-        payable
-        returns (OrderResult memory result);
-
-    function marketSellETHWithDeadline(
-        address quote, bool isMaker, uint32 n, address recipient, uint32 slippageLimit, uint64 deadline
-    ) external payable returns (OrderResult memory result);
-
-    function limitBuy(
-        address base,
-        address quote,
-        uint256 price,
-        uint256 quoteAmount,
-        bool isMaker,
-        uint32 n,
-        address recipient
-    ) external returns (OrderResult memory result);
-
-    function limitBuyWithDeadline(
-        address base, address quote, uint256 price, uint256 quoteAmount, bool isMaker,
-        uint32 n, address recipient, uint64 deadline
-    ) external returns (OrderResult memory result);
-
-    function limitSell(
-        address base,
-        address quote,
-        uint256 price,
-        uint256 baseAmount,
-        bool isMaker,
-        uint32 n,
-        address recipient
-    ) external returns (OrderResult memory result);
-
-    function limitSellWithDeadline(
-        address base, address quote, uint256 price, uint256 baseAmount, bool isMaker,
-        uint32 n, address recipient, uint64 deadline
-    ) external returns (OrderResult memory result);
-
-    function limitBuyETH(address base, uint256 price, bool isMaker, uint32 n, address recipient)
-        external
-        payable
-        returns (OrderResult memory result);
-
-    function limitBuyETHWithDeadline(
-        address base, uint256 price, bool isMaker, uint32 n, address recipient, uint64 deadline
-    ) external payable returns (OrderResult memory result);
-
-    function limitSellETH(address quote, uint256 price, bool isMaker, uint32 n, address recipient)
-        external
-        payable
-        returns (OrderResult memory result);
-
-    function limitSellETHWithDeadline(
-        address quote, uint256 price, bool isMaker, uint32 n, address recipient, uint64 deadline
-    ) external payable returns (OrderResult memory result);
+    function limitSell(LimitOrderInput calldata input) external returns (OrderResult memory result);
 
     function addPair(
         address base,
@@ -233,14 +203,14 @@ interface IMatchingEngine {
         ExchangeOrderbook.MatchingMode mode
     ) external returns (address pair);
 
-    function createOrder(CreateOrderInput memory createOrderData)
+    function createOrder(CreateOrderInput calldata createOrderData)
         external
         payable
         returns (OrderResult memory result);
 
-    function createOrders(CreateOrderInput[] memory createOrderData) external payable returns (OrderResult[] memory results);
+    function createOrders(CreateOrderInput[] calldata createOrderData) external payable returns (OrderResult[] memory results);
 
-    function updateOrders(CreateOrderInput[] memory createOrderData) external payable returns (OrderResult[] memory results);
+    function updateOrders(CreateOrderInput[] calldata createOrderData) external payable returns (OrderResult[] memory results);
 
     function cancelOrder(address base, address quote, bool isBid, uint32 orderId) external returns (uint256 refunded);
 

@@ -66,30 +66,41 @@ interface ISwapRouter {
         address indexed pool, uint256 indexed positionId, address indexed recipient, uint256 baseAmount, uint256 quoteAmount
     );
 
-    /// @notice Routes `amountIn` of `path[0]` through each consecutive pair in `path`, applying
-    /// the same `remainderMode` to whatever doesn't match at EVERY hop (not just the final one).
+    /// One calldata struct per entrypoint, matching IMatchingEngine's order API. The six
+    /// positional arguments below included two 256-bit amounts and an enum, which a
+    /// wagmi/viem caller can transpose while still encoding successfully -- a named object
+    /// cannot be mis-ordered. Unlike the engine, this contract has room to spare: SwapRouter
+    /// deploys at well under half the EIP-170 limit.
+    struct SwapInput {
+        address[] path;
+        uint256 amountIn;
+        uint256 minAmountOut;
+        address recipient;
+        RemainderMode remainderMode;
+        RemainderConfig remainderConfig;
+    }
+
+    /// Calldata struct for `removeLiquidity`, same reasoning as SwapInput.
+    struct RemoveLiquidityInput {
+        address positionManager;
+        uint256 tokenId;
+        uint256 baseAmount;
+        uint256 quoteAmount;
+        address recipient;
+    }
+
+    /// @notice Routes `input.amountIn` of `input.path[0]` through each consecutive pair in
+    /// `input.path`, applying the same `input.remainderMode` to whatever doesn't match at EVERY
+    /// hop (not just the final one).
     /// There is no partial-fill revert anywhere in this path anymore: a hop that only partially
     /// matches still forwards its matched output to the next hop, and its unmatched input is
-    /// disposed of immediately via `remainderMode` -- refunded, rested as an order, or deposited
-    /// as new LP liquidity -- so the route always completes.
-    function swap(
-        address[] calldata path,
-        uint256 amountIn,
-        uint256 minAmountOut,
-        address recipient,
-        RemainderMode remainderMode,
-        RemainderConfig calldata remainderConfig
-    ) external returns (uint256 amountOut);
+    /// disposed of immediately via `input.remainderMode` -- refunded, rested as an order, or
+    /// deposited as new LP liquidity -- so the route always completes.
+    function swap(SwapInput calldata input) external returns (uint256 amountOut);
 
     /// @notice Removes liquidity from a position through its PositionManager, on behalf of
     /// msg.sender. `positionManager` must have this router wired up via its own `setRouter` --
     /// the caller must actually hold `tokenId` (or be approved for it) on that PositionManager,
     /// same authorization a direct PositionManager.removeLiquidity call would require.
-    function removeLiquidity(
-        address positionManager,
-        uint256 tokenId,
-        uint256 baseAmount,
-        uint256 quoteAmount,
-        address recipient
-    ) external;
+    function removeLiquidity(RemoveLiquidityInput calldata input) external;
 }

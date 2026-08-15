@@ -22,14 +22,14 @@ contract SwapRouter is ISwapRouter {
     }
 
     /// @inheritdoc ISwapRouter
-    function swap(
-        address[] calldata path,
-        uint256 amountIn,
-        uint256 minAmountOut,
-        address recipient,
-        RemainderMode remainderMode,
-        RemainderConfig calldata remainderConfig
-    ) external override returns (uint256 amountOut) {
+    function swap(SwapInput calldata input) external override returns (uint256 amountOut) {
+        address[] calldata path = input.path;
+        uint256 amountIn = input.amountIn;
+        uint256 minAmountOut = input.minAmountOut;
+        address recipient = input.recipient;
+        RemainderMode remainderMode = input.remainderMode;
+        RemainderConfig calldata remainderConfig = input.remainderConfig;
+
         TransferHelper.safeTransferFrom(path[0], msg.sender, address(this), amountIn);
 
         uint256 currentAmountIn = amountIn;
@@ -136,9 +136,29 @@ contract SwapRouter is ISwapRouter {
         uint256 price = restPrice > 0 ? restPrice : IMatchingEngine(engine).mktPrice(base, quote);
         TransferHelper.safeApprove(tokenIn, engine, amount);
         if (base != tokenIn) {
-            IMatchingEngine(engine).limitBuy(base, quote, price, amount, true, REMAINDER_MATCH_CAP, recipient);
+            IMatchingEngine(engine).limitBuy(
+                IMatchingEngine.LimitOrderInput({
+                    base: base,
+                    quote: quote,
+                    price: price,
+                    amount: amount,
+                    isMaker: true,
+                    n: REMAINDER_MATCH_CAP,
+                    recipient: recipient
+                })
+            );
         } else {
-            IMatchingEngine(engine).limitSell(base, quote, price, amount, true, REMAINDER_MATCH_CAP, recipient);
+            IMatchingEngine(engine).limitSell(
+                IMatchingEngine.LimitOrderInput({
+                    base: base,
+                    quote: quote,
+                    price: price,
+                    amount: amount,
+                    isMaker: true,
+                    n: REMAINDER_MATCH_CAP,
+                    recipient: recipient
+                })
+            );
         }
     }
 
@@ -186,16 +206,13 @@ contract SwapRouter is ISwapRouter {
     }
 
     /// @inheritdoc ISwapRouter
-    function removeLiquidity(
-        address positionManager,
-        uint256 tokenId,
-        uint256 baseAmount,
-        uint256 quoteAmount,
-        address recipient
-    ) external override {
-        (address pool, uint256 positionId) = IPositionManager(positionManager).tokenPosition(tokenId);
-        IPositionManager(positionManager).removeLiquidityFor(msg.sender, tokenId, baseAmount, quoteAmount, recipient);
-        emit LiquidityRemoved(pool, positionId, recipient, baseAmount, quoteAmount);
+    function removeLiquidity(RemoveLiquidityInput calldata input) external override {
+        (address pool, uint256 positionId) =
+            IPositionManager(input.positionManager).tokenPosition(input.tokenId);
+        IPositionManager(input.positionManager).removeLiquidityFor(
+            msg.sender, input.tokenId, input.baseAmount, input.quoteAmount, input.recipient
+        );
+        emit LiquidityRemoved(pool, positionId, input.recipient, input.baseAmount, input.quoteAmount);
     }
 
     function _getPool(address tokenIn, address tokenOut) private view returns (address pool) {

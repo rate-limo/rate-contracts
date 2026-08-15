@@ -28,8 +28,21 @@ contract LimitOrderTest is BaseSetup {
         uint256 balanceBefore = token2.balanceOf(trader1);
         uint64 deadline = uint64(block.timestamp + 1 hours);
         vm.prank(trader1);
-        IMatchingEngine.OrderResult memory result = matchingEngine.limitBuyWithDeadline(
-            address(token1), address(token2), 1e8, 100e18, true, 2, trader1, deadline
+        IMatchingEngine.OrderResult memory result = matchingEngine.createOrder(
+            IMatchingEngine.CreateOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                isBid: true,
+                isLimit: true,
+                orderId: 0,
+                price: 1e8,
+                amount: 100e18,
+                n: 2,
+                recipient: trader1,
+                isMaker: true,
+                slippageLimit: 0,
+                deadline: deadline
+            })
         );
         ExchangeOrderbook.Order memory order = matchingEngine.getOrder(
             address(token1), address(token2), true, result.id
@@ -56,12 +69,38 @@ contract LimitOrderTest is BaseSetup {
         vm.warp(100);
         vm.startPrank(trader1);
         vm.expectRevert(abi.encodeWithSelector(MatchingEngine.DeadlineExpired.selector, uint64(99), uint256(100)));
-        matchingEngine.limitSellWithDeadline(
-            address(token1), address(token2), 1e8, 1e18, true, 2, trader1, 99
+        matchingEngine.createOrder(
+            IMatchingEngine.CreateOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                isBid: false,
+                isLimit: true,
+                orderId: 0,
+                price: 1e8,
+                amount: 1e18,
+                n: 2,
+                recipient: trader1,
+                isMaker: true,
+                slippageLimit: 0,
+                deadline: 99
+            })
         );
         vm.expectRevert(abi.encodeWithSelector(MatchingEngine.DeadlineExpired.selector, uint64(99), uint256(100)));
-        matchingEngine.marketBuyWithDeadline(
-            address(token1), address(token2), 100e18, false, 2, trader1, 1_000_000, 99
+        matchingEngine.createOrder(
+            IMatchingEngine.CreateOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                isBid: true,
+                isLimit: false,
+                orderId: 0,
+                price: 0,
+                amount: 100e18,
+                n: 2,
+                recipient: trader1,
+                isMaker: false,
+                slippageLimit: 1_000_000,
+                deadline: 99
+            })
         );
         vm.stopPrank();
     }
@@ -75,11 +114,32 @@ contract LimitOrderTest is BaseSetup {
         uint64 deadline = uint64(block.timestamp + 1 hours);
         uint256 makerBaseBefore = token1.balanceOf(trader1);
         vm.startPrank(trader1);
-        IMatchingEngine.OrderResult memory expired = matchingEngine.limitSellWithDeadline(
-            address(token1), address(token2), 1e8, 1e18, true, 2, trader1, deadline
+        IMatchingEngine.OrderResult memory expired = matchingEngine.createOrder(
+            IMatchingEngine.CreateOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                isBid: false,
+                isLimit: true,
+                orderId: 0,
+                price: 1e8,
+                amount: 1e18,
+                n: 2,
+                recipient: trader1,
+                isMaker: true,
+                slippageLimit: 0,
+                deadline: deadline
+            })
         );
         IMatchingEngine.OrderResult memory live = matchingEngine.limitSell(
-            address(token1), address(token2), 1e8, 1e18, true, 2, trader1
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 1e8,
+                amount: 1e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
         );
         vm.stopPrank();
 
@@ -87,7 +147,15 @@ contract LimitOrderTest is BaseSetup {
         uint256 takerBaseBefore = token1.balanceOf(trader2);
         vm.prank(trader2);
         matchingEngine.limitBuy(
-            address(token1), address(token2), 1e8, 100e18, false, 2, trader2
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 1e8,
+                amount: 100e18,
+                isMaker: false,
+                n: 2,
+                recipient: trader2
+            })
         );
 
         assertEq(token1.balanceOf(trader2) - takerBaseBefore, 0.999e18, "live order filled");
@@ -101,9 +169,29 @@ contract LimitOrderTest is BaseSetup {
         matchingEngine.addPair(address(token1), address(btc), 1e8, 0, address(token1), ExchangeOrderbook.MatchingMode.PriceTimePriority);
         console.log("Base/Quote Pair: ", matchingEngine.getPair(address(token1), address(btc)));
         vm.prank(trader1);
-        matchingEngine.limitBuy(address(token1), address(btc), 1e8, 1e8, true, 2, trader1);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(btc),
+                price: 1e8,
+                amount: 1e8,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
         vm.prank(trader2);
-        matchingEngine.limitSell(address(token1), address(btc), 1e8, 1e18, true, 2, trader2);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(btc),
+                price: 1e8,
+                amount: 1e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader2
+            })
+        );
     }
 
     function testLimitTrade() public {
@@ -111,9 +199,29 @@ contract LimitOrderTest is BaseSetup {
         matchingEngine.addPair(address(token1), address(token2), 1e8, 0, address(token1), ExchangeOrderbook.MatchingMode.PriceTimePriority);
         console.log("Base/Quote Pair: ", matchingEngine.getPair(address(token1), address(token2)));
         vm.prank(trader1);
-        matchingEngine.limitBuy(address(token1), address(token2), 1e8, 100e18, true, 2, trader1);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 1e8,
+                amount: 100e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
         vm.prank(trader2);
-        matchingEngine.limitSell(address(token1), address(token2), 1e8, 100e18, true, 2, trader2);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 1e8,
+                amount: 100e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader2
+            })
+        );
     }
 
     function testLimitBuyETH() public {
@@ -122,11 +230,36 @@ contract LimitOrderTest is BaseSetup {
         console.log("weth balance");
         console.log(trader1.balance / 1e18);
         vm.prank(trader1);
-        matchingEngine.limitBuyETH{value: 1e18}(address(token1), 1e8, true, 5, trader1);
+        matchingEngine.createOrder{value: 1e18}(
+            IMatchingEngine.CreateOrderInput({
+                base: address(token1),
+                quote: matchingEngine.WETH(),
+                isBid: true,
+                isLimit: true,
+                orderId: 0,
+                price: 1e8,
+                amount: 1e18,
+                n: 5,
+                recipient: trader1,
+                isMaker: true,
+                slippageLimit: 0,
+                deadline: 0
+            })
+        );
         vm.prank(trader1);
         token1.approve(address(matchingEngine), 10e18);
         vm.prank(trader1);
-        matchingEngine.limitSell(address(token1), address(weth), 1e8, 1e18, true, 5, trader1);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(weth),
+                price: 1e8,
+                amount: 1e18,
+                isMaker: true,
+                n: 5,
+                recipient: trader1
+            })
+        );
         console.log("weth balance");
         console.log(trader1.balance / 1e18);
     }
@@ -138,13 +271,53 @@ contract LimitOrderTest is BaseSetup {
         console.log("weth balance");
         console.log(trader1.balance / 1e18);
         vm.prank(trader1);
-        matchingEngine.limitSellETH{value: 1e18}(address(token1), 1e8, true, 5, trader1);
+        matchingEngine.createOrder{value: 1e18}(
+            IMatchingEngine.CreateOrderInput({
+                base: matchingEngine.WETH(),
+                quote: address(token1),
+                isBid: false,
+                isLimit: true,
+                orderId: 0,
+                price: 1e8,
+                amount: 1e18,
+                n: 5,
+                recipient: trader1,
+                isMaker: true,
+                slippageLimit: 0,
+                deadline: 0
+            })
+        );
         vm.prank(trader1);
-        matchingEngine.limitBuyETH{value: 1e18}(address(token1), 1e8, true, 5, trader1);
+        matchingEngine.createOrder{value: 1e18}(
+            IMatchingEngine.CreateOrderInput({
+                base: address(token1),
+                quote: matchingEngine.WETH(),
+                isBid: true,
+                isLimit: true,
+                orderId: 0,
+                price: 1e8,
+                amount: 1e18,
+                n: 5,
+                recipient: trader1,
+                isMaker: true,
+                slippageLimit: 0,
+                deadline: 0
+            })
+        );
         vm.prank(trader1);
         token1.approve(address(matchingEngine), 10e18);
         vm.prank(trader1);
-        matchingEngine.limitBuy(address(weth), address(token1), 1e8, 1e18, true, 5, trader1);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(weth),
+                quote: address(token1),
+                price: 1e8,
+                amount: 1e18,
+                isMaker: true,
+                n: 5,
+                recipient: trader1
+            })
+        );
         console.log("weth balance");
         console.log(trader1.balance / 1e18);
     }
@@ -156,12 +329,32 @@ contract LimitOrderTest is BaseSetup {
         console.log(trader1.balance / 1e18);
         vm.startPrank(trader1);
 
-        matchingEngine.limitBuy(address(weth), address(token1), 1e8, 1e18, true, 5, trader1);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(weth),
+                quote: address(token1),
+                price: 1e8,
+                amount: 1e18,
+                isMaker: true,
+                n: 5,
+                recipient: trader1
+            })
+        );
         console.log("weth balance");
         console.log(trader1.balance / 1e18);
         uint256 mktPrice = matchingEngine.mktPrice(address(weth), address(token1));
         console.log(mktPrice);
-        matchingEngine.limitBuy(address(weth), address(token1), 294900000001, 1e18, true, 5, trader1);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(weth),
+                quote: address(token1),
+                price: 294900000001,
+                amount: 1e18,
+                isMaker: true,
+                n: 5,
+                recipient: trader1
+            })
+        );
     }
 
     // limit order is possible on out of spread range, but it is not matched
@@ -170,7 +363,17 @@ contract LimitOrderTest is BaseSetup {
         matchingEngine.addPair(address(token1), address(token2), 1e8, 0, address(token1), ExchangeOrderbook.MatchingMode.PriceTimePriority);
         vm.prank(trader1);
         // mktprice is setup with lmp
-        matchingEngine.limitBuy(address(token1), address(token2), 1e8, 1e18, true, 5, trader1);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 1e8,
+                amount: 1e18,
+                isMaker: true,
+                n: 5,
+                recipient: trader1
+            })
+        );
     }
 
     function _setupVolatilityTest()
@@ -195,8 +398,28 @@ contract LimitOrderTest is BaseSetup {
         base.approve(address(matchingEngine), type(uint256).max);
         quote.approve(address(matchingEngine), type(uint256).max);
         // make last matched price
-        matchingEngine.limitBuy(address(base), address(quote), 1e8, 1e18, true, 2, trader1);
-        matchingEngine.limitSell(address(base), address(quote), 1e8, 1e18, true, 2, trader1);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(base),
+                quote: address(quote),
+                price: 1e8,
+                amount: 1e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(base),
+                quote: address(quote),
+                price: 1e8,
+                amount: 1e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
         // get pair and price info
         book = Orderbook(payable(matchingEngine.getPair(address(base), address(quote))));
         (uint256 bidHead, uint256 askHead) = book.heads();
@@ -283,7 +506,17 @@ contract LimitOrderTest is BaseSetup {
         console.log("result: ", result);
         assert(result == limitPrice);
         MatchingEngine.OrderResult memory orderResult =
-            matchingEngine.limitSell(address(base), address(quote), limitPrice, 1e18, true, 5, trader1);
+            matchingEngine.limitSell(
+                IMatchingEngine.LimitOrderInput({
+                    base: address(base),
+                    quote: address(quote),
+                    price: limitPrice,
+                    amount: 1e18,
+                    isMaker: true,
+                    n: 5,
+                    recipient: trader1
+                })
+            );
         assert(orderResult.makePrice == result);
     }
 
@@ -300,7 +533,17 @@ contract LimitOrderTest is BaseSetup {
         assert(result == down);
         uint256 mp = IOrderbook(address(book)).lmp();
         MatchingEngine.OrderResult memory orderResult =
-            matchingEngine.limitSell(address(base), address(quote), limitPrice, 1e18, true, 5, trader1);
+            matchingEngine.limitSell(
+                IMatchingEngine.LimitOrderInput({
+                    base: address(base),
+                    quote: address(quote),
+                    price: limitPrice,
+                    amount: 1e18,
+                    isMaker: true,
+                    n: 5,
+                    recipient: trader1
+                })
+            );
         assert(orderResult.makePrice == result);
         assert(orderResult.makePrice < mp);
     }
@@ -318,7 +561,17 @@ contract LimitOrderTest is BaseSetup {
         uint256 mp = IOrderbook(address(book)).lmp();
         assert(result == up);
         MatchingEngine.OrderResult memory orderResult =
-            matchingEngine.limitBuy(address(base), address(quote), limitPrice, 1e18, true, 5, trader1);
+            matchingEngine.limitBuy(
+                IMatchingEngine.LimitOrderInput({
+                    base: address(base),
+                    quote: address(quote),
+                    price: limitPrice,
+                    amount: 1e18,
+                    isMaker: true,
+                    n: 5,
+                    recipient: trader1
+                })
+            );
         assert(orderResult.makePrice == result);
         assert(orderResult.makePrice > mp);
     }
@@ -335,7 +588,17 @@ contract LimitOrderTest is BaseSetup {
         console.log("result: ", result);
         assert(result == limitPrice);
         MatchingEngine.OrderResult memory orderResult =
-            matchingEngine.limitBuy(address(base), address(quote), limitPrice, 1e18, true, 5, trader1);
+            matchingEngine.limitBuy(
+                IMatchingEngine.LimitOrderInput({
+                    base: address(base),
+                    quote: address(quote),
+                    price: limitPrice,
+                    amount: 1e18,
+                    isMaker: true,
+                    n: 5,
+                    recipient: trader1
+                })
+            );
         assert(orderResult.makePrice == result);
     }
 
@@ -343,7 +606,17 @@ contract LimitOrderTest is BaseSetup {
     function testLimitSellVolatilityLimitPrice() public {
         (MockBase base, MockQuote quote, Orderbook book, uint256 bidHead, uint256 askHead, uint256 up, uint256 down) =
             _setupVolatilityTest();
-        matchingEngine.limitSell(address(base), address(quote), 1e8, 1e18, true, 5, trader1);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(base),
+                quote: address(quote),
+                price: 1e8,
+                amount: 1e18,
+                isMaker: true,
+                n: 5,
+                recipient: trader1
+            })
+        );
     }
 
     function testLimitBuyNoSuspensionWhenBidAskHeadExists() public {
@@ -351,10 +624,40 @@ contract LimitOrderTest is BaseSetup {
             _setupVolatilityTest();
 
         // set up a limit buy/sell order
-        matchingEngine.limitBuy(address(base), address(quote), 1e7, 1e18, true, 5, trader1);
-        matchingEngine.limitSell(address(base), address(quote), 1e11, 1e18, true, 5, trader1);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(base),
+                quote: address(quote),
+                price: 1e7,
+                amount: 1e18,
+                isMaker: true,
+                n: 5,
+                recipient: trader1
+            })
+        );
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(base),
+                quote: address(quote),
+                price: 1e11,
+                amount: 1e18,
+                isMaker: true,
+                n: 5,
+                recipient: trader1
+            })
+        );
         // set up a limit buy order to match the limit sell
-        matchingEngine.limitBuy(address(base), address(quote), 1e10, 1e18, true, 8, trader1);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(base),
+                quote: address(quote),
+                price: 1e10,
+                amount: 1e18,
+                isMaker: true,
+                n: 8,
+                recipient: trader1
+            })
+        );
 
         assert(matchingEngine.mktPrice(address(base), address(quote)) == 102e6);
     }
@@ -364,11 +667,41 @@ contract LimitOrderTest is BaseSetup {
             _setupVolatilityTest();
 
         // set up a limit buy/sell order
-        matchingEngine.limitBuy(address(base), address(quote), 1e7, 1e18, true, 5, trader1);
-        matchingEngine.limitSell(address(base), address(quote), 1e11, 1e18, true, 5, trader1);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(base),
+                quote: address(quote),
+                price: 1e7,
+                amount: 1e18,
+                isMaker: true,
+                n: 5,
+                recipient: trader1
+            })
+        );
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(base),
+                quote: address(quote),
+                price: 1e11,
+                amount: 1e18,
+                isMaker: true,
+                n: 5,
+                recipient: trader1
+            })
+        );
 
         // set up a limit buy order to match the limit sell
-        matchingEngine.limitBuy(address(base), address(quote), 1e12, 1e24, true, 8, trader1);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(base),
+                quote: address(quote),
+                price: 1e12,
+                amount: 1e24,
+                isMaker: true,
+                n: 8,
+                recipient: trader1
+            })
+        );
 
         assert(matchingEngine.mktPrice(address(base), address(quote)) == 102e6);
     }
@@ -378,11 +711,41 @@ contract LimitOrderTest is BaseSetup {
             _setupVolatilityTest();
 
         // set up a limit sell order
-        matchingEngine.limitBuy(address(base), address(quote), 1e6, 1e18, true, 5, trader1);
-        matchingEngine.limitSell(address(base), address(quote), 1e11, 1e18, true, 5, trader1);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(base),
+                quote: address(quote),
+                price: 1e6,
+                amount: 1e18,
+                isMaker: true,
+                n: 5,
+                recipient: trader1
+            })
+        );
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(base),
+                quote: address(quote),
+                price: 1e11,
+                amount: 1e18,
+                isMaker: true,
+                n: 5,
+                recipient: trader1
+            })
+        );
 
         // set up a limit buy order to match the limit sell
-        matchingEngine.limitSell(address(base), address(quote), 1e7, 1e20, true, 8, trader1);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(base),
+                quote: address(quote),
+                price: 1e7,
+                amount: 1e20,
+                isMaker: true,
+                n: 8,
+                recipient: trader1
+            })
+        );
 
         assert(matchingEngine.mktPrice(address(base), address(quote)) == 98e6);
     }
@@ -392,11 +755,41 @@ contract LimitOrderTest is BaseSetup {
             _setupVolatilityTest();
 
         // set up a limit buy/sell order
-        matchingEngine.limitBuy(address(base), address(quote), 1e6, 1e18, true, 5, trader1);
-        matchingEngine.limitSell(address(base), address(quote), 1e11, 1e18, true, 5, trader1);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(base),
+                quote: address(quote),
+                price: 1e6,
+                amount: 1e18,
+                isMaker: true,
+                n: 5,
+                recipient: trader1
+            })
+        );
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(base),
+                quote: address(quote),
+                price: 1e11,
+                amount: 1e18,
+                isMaker: true,
+                n: 5,
+                recipient: trader1
+            })
+        );
 
         // set up a limit buy order to match the limit sell
-        matchingEngine.limitSell(address(base), address(quote), 1e5, 1e24, true, 8, trader1);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(base),
+                quote: address(quote),
+                price: 1e5,
+                amount: 1e24,
+                isMaker: true,
+                n: 8,
+                recipient: trader1
+            })
+        );
 
         assert(matchingEngine.mktPrice(address(base), address(quote)) == 98e6);
     }
@@ -405,12 +798,42 @@ contract LimitOrderTest is BaseSetup {
         (MockBase base, MockQuote quote, Orderbook book, uint256 bidHead, uint256 askHead, uint256 up, uint256 down) =
             _setupVolatilityTest();
 
-        matchingEngine.limitBuy(address(base), address(quote), 1e8 - 1, 1e18, true, 5, trader1);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(base),
+                quote: address(quote),
+                price: 1e8 - 1,
+                amount: 1e18,
+                isMaker: true,
+                n: 5,
+                recipient: trader1
+            })
+        );
 
-        matchingEngine.limitSell(address(base), address(quote), 1e8 + 1, 1e18, true, 5, trader1);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(base),
+                quote: address(quote),
+                price: 1e8 + 1,
+                amount: 1e18,
+                isMaker: true,
+                n: 5,
+                recipient: trader1
+            })
+        );
 
         MatchingEngine.OrderResult memory result =
-            matchingEngine.limitBuy(address(base), address(quote), 1e5, 1e18, true, 5, trader1);
+            matchingEngine.limitBuy(
+                IMatchingEngine.LimitOrderInput({
+                    base: address(base),
+                    quote: address(quote),
+                    price: 1e5,
+                    amount: 1e18,
+                    isMaker: true,
+                    n: 5,
+                    recipient: trader1
+                })
+            );
 
         assert(result.makePrice == 1e5);
     }
@@ -419,12 +842,42 @@ contract LimitOrderTest is BaseSetup {
         (MockBase base, MockQuote quote, Orderbook book, uint256 bidHead, uint256 askHead, uint256 up, uint256 down) =
             _setupVolatilityTest();
 
-        matchingEngine.limitBuy(address(base), address(quote), 1e8 - 1, 1e18, true, 5, trader1);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(base),
+                quote: address(quote),
+                price: 1e8 - 1,
+                amount: 1e18,
+                isMaker: true,
+                n: 5,
+                recipient: trader1
+            })
+        );
 
-        matchingEngine.limitSell(address(base), address(quote), 1e8 + 1, 1e18, true, 5, trader1);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(base),
+                quote: address(quote),
+                price: 1e8 + 1,
+                amount: 1e18,
+                isMaker: true,
+                n: 5,
+                recipient: trader1
+            })
+        );
 
         MatchingEngine.OrderResult memory result =
-            matchingEngine.limitSell(address(base), address(quote), 1e11, 1e18, true, 5, trader1);
+            matchingEngine.limitSell(
+                IMatchingEngine.LimitOrderInput({
+                    base: address(base),
+                    quote: address(quote),
+                    price: 1e11,
+                    amount: 1e18,
+                    isMaker: true,
+                    n: 5,
+                    recipient: trader1
+                })
+            );
 
         assert(result.makePrice == 1e11);
     }

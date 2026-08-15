@@ -15,16 +15,37 @@ import {WETH9} from "../../../src/mock/WETH9.sol";
 import {BaseSetup} from "../OrderbookBaseSetup.sol";
 import {console} from "forge-std/console.sol";
 import {stdStorage, StdStorage, Test} from "forge-std/Test.sol";
+import {IMatchingEngine} from "../../../src/exchange/interfaces/IMatchingEngine.sol";
 
 contract OrderMatchTest is BaseSetup {
     function testRemoveHeadOnMatch() public {
         super.setUp();
         matchingEngine.addPair(address(token1), address(token2), 1000e8, 0, address(token1), ExchangeOrderbook.MatchingMode.PriceTimePriority);
         vm.prank(trader1);
-        matchingEngine.limitSell(address(token1), address(token2), 1000e8, 10000e18, true, 2, trader1);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 1000e8,
+                amount: 10000e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
         console.log("Ask Orders: ");
         vm.prank(trader1);
-        matchingEngine.limitBuy(address(token1), address(token2), 1000e8, 10000e18, false, 2, trader1);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 1000e8,
+                amount: 10000e18,
+                isMaker: false,
+                n: 2,
+                recipient: trader1
+            })
+        );
         book = Orderbook(payable(orderbookFactory.getPair(address(token1), address(token2))));
         (uint256 bidHead, uint256 askHead) = book.heads();
         console.log(bidHead, askHead);
@@ -33,7 +54,17 @@ contract OrderMatchTest is BaseSetup {
         //console.log(book.checkRequired());
         vm.prank(trader1);
 
-        matchingEngine.limitBuy(address(token1), address(token2), 1000e8, 10000e18, true, 2, trader1);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 1000e8,
+                amount: 10000e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
     }
 
     function testMatchOrders() public {
@@ -43,11 +74,31 @@ contract OrderMatchTest is BaseSetup {
         // placeBid or placeAsk two of them is using the _insertId function it will revert
         // because the program will enter the "if (amount > self.orders[head].depositAmount)."
         // statement, and eventually, it will cause an infinite loop.
-        matchingEngine.limitBuy(address(token1), address(token2), 1000e8, 3000e18, true, 2, trader2);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 1000e8,
+                amount: 3000e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader2
+            })
+        );
 
         vm.prank(trader1);
         //vm.expectRevert("OutOfGas");
-        matchingEngine.limitSell(address(token1), address(token2), 1000e8, 1e18, true, 2, trader1);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 1000e8,
+                amount: 1e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
 
         book = Orderbook(payable(orderbookFactory.getPair(address(token1), address(token2))));
         (uint256 bidHead, uint256 askHead) = book.heads();
@@ -55,7 +106,17 @@ contract OrderMatchTest is BaseSetup {
 
         vm.prank(trader2);
         //vm.expectRevert("OutOfGas");
-        matchingEngine.limitSell(address(token1), address(token2), 1000e8, 1e18, true, 2, trader2);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 1000e8,
+                amount: 1e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader2
+            })
+        );
     }
 
     function testAmountIsZero() public {
@@ -68,6 +129,16 @@ contract OrderMatchTest is BaseSetup {
         // placeBid or placeAsk two of them is using the _insertId function it will revert
         // because the program will enter the "if (amount > self.orders[head].depositAmount)."
         // statement, and eventually, it will cause an infinite loop.
-        matchingEngine.limitSell(address(token1), address(token2), 500000000, 10, true, 2, trader1);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 500000000,
+                amount: 10,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
     }
 }

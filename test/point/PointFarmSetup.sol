@@ -17,6 +17,7 @@ import {PrizePool} from "../../src/point/PrizePool.sol";
 import {MockBase} from "../../src/mock/MockBase.sol";
 import {MockQuote} from "../../src/mock/MockQuote.sol";
 import {MockUSDC} from "../../src/mock/MockUSDC.sol";
+import {IMatchingEngine} from "../../src/exchange/interfaces/IMatchingEngine.sol";
 
 contract PointFarmSetup is Test {
     bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");
@@ -108,11 +109,31 @@ contract PointFarmSetup is Test {
         // mine 1000 blocks
         utils.mineBlocks(1000);
         vm.prank(trader2);
-        matchingEngine.limitSell(address(feeToken), address(stablecoin), 10000e8, 1000e10, true, 1, trader2);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(feeToken),
+                quote: address(stablecoin),
+                price: 10000e8,
+                amount: 1000e10,
+                isMaker: true,
+                n: 1,
+                recipient: trader2
+            })
+        );
         // match the order to make lmp so that accountant can report
         vm.prank(trader1);
         feeToken.approve(address(matchingEngine), 10000e18);
         vm.prank(trader1);
-        matchingEngine.limitBuy(address(feeToken), address(stablecoin), 10000e8, 1000e10, true, 1, trader1);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(feeToken),
+                quote: address(stablecoin),
+                price: 10000e8,
+                amount: 1000e10,
+                isMaker: true,
+                n: 1,
+                recipient: trader1
+            })
+        );
     }
 }

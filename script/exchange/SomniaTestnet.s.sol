@@ -162,13 +162,15 @@ contract MarketBuy is Deployer {
         _setDeployer();
         MatchingEngine matchingEngine = MatchingEngine(payable(engine));
         matchingEngine.marketBuy(
-            address(0x4A3BC48C156384f9564Fd65A53a2f3D534D8f2b7),
-            address(0x0ED782B8079529f7385c3eDA9fAf1EaA0DbC6a17),
-            17390200,
-            true,
-            1,
-            address(0x44E7525Cf9d56733D08fc98BcD750d504fCE91eC),
-            10000000
+            IMatchingEngine.MarketOrderInput({
+                base: address(0x4A3BC48C156384f9564Fd65A53a2f3D534D8f2b7),
+                quote: address(0x0ED782B8079529f7385c3eDA9fAf1EaA0DbC6a17),
+                amount: 17390200,
+                isMaker: true,
+                n: 1,
+                recipient: address(0x44E7525Cf9d56733D08fc98BcD750d504fCE91eC),
+                slippageLimit: 10000000
+            })
         );
         vm.stopBroadcast();
     }

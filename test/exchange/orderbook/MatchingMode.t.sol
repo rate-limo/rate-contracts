@@ -4,6 +4,7 @@ import {MatchingEngine} from "../../../src/exchange/MatchingEngine.sol";
 import {Orderbook} from "../../../src/exchange/orderbooks/Orderbook.sol";
 import {ExchangeOrderbook} from "../../../src/exchange/libraries/ExchangeOrderbook.sol";
 import {BaseSetup} from "../OrderbookBaseSetup.sol";
+import {IMatchingEngine} from "../../../src/exchange/interfaces/IMatchingEngine.sol";
 
 // PriceTimePriority (strict FIFO) is the only matching mode. SizePriority — largest
 // resting order at a price fills first — was removed on 2026-08-06 because keeping the
@@ -23,9 +24,29 @@ contract MatchingModeTest is BaseSetup {
         book = Orderbook(payable(orderbookFactory.getPair(address(token1), address(token2))));
 
         vm.prank(trader1);
-        matchingEngine.limitSell(address(token1), address(token2), 1e8, 10, true, 1, trader1);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 1e8,
+                amount: 10,
+                isMaker: true,
+                n: 1,
+                recipient: trader1
+            })
+        );
         vm.prank(trader1);
-        matchingEngine.limitSell(address(token1), address(token2), 1e8, 50, true, 1, trader1);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 1e8,
+                amount: 50,
+                isMaker: true,
+                n: 1,
+                recipient: trader1
+            })
+        );
 
         uint32[] memory ids = book.getOrderIds(false, 1e8, 2);
         ExchangeOrderbook.Order memory head = book.getOrder(false, ids[0]);
@@ -46,11 +67,41 @@ contract MatchingModeTest is BaseSetup {
 
         vm.startPrank(trader1);
         MatchingEngine.OrderResult memory a =
-            matchingEngine.limitSell(address(token1), address(token2), 1e8, 10, true, 1, trader1);
+            matchingEngine.limitSell(
+                IMatchingEngine.LimitOrderInput({
+                    base: address(token1),
+                    quote: address(token2),
+                    price: 1e8,
+                    amount: 10,
+                    isMaker: true,
+                    n: 1,
+                    recipient: trader1
+                })
+            );
         MatchingEngine.OrderResult memory b =
-            matchingEngine.limitSell(address(token1), address(token2), 1e8, 20, true, 1, trader1);
+            matchingEngine.limitSell(
+                IMatchingEngine.LimitOrderInput({
+                    base: address(token1),
+                    quote: address(token2),
+                    price: 1e8,
+                    amount: 20,
+                    isMaker: true,
+                    n: 1,
+                    recipient: trader1
+                })
+            );
         MatchingEngine.OrderResult memory c =
-            matchingEngine.limitSell(address(token1), address(token2), 1e8, 30, true, 1, trader1);
+            matchingEngine.limitSell(
+                IMatchingEngine.LimitOrderInput({
+                    base: address(token1),
+                    quote: address(token2),
+                    price: 1e8,
+                    amount: 30,
+                    isMaker: true,
+                    n: 1,
+                    recipient: trader1
+                })
+            );
         vm.stopPrank();
 
         // cancel the middle order: a -> c must remain linked
@@ -65,7 +116,17 @@ contract MatchingModeTest is BaseSetup {
         matchingEngine.cancelOrder(address(token1), address(token2), false, c.id);
         vm.prank(trader1);
         MatchingEngine.OrderResult memory d =
-            matchingEngine.limitSell(address(token1), address(token2), 1e8, 40, true, 1, trader1);
+            matchingEngine.limitSell(
+                IMatchingEngine.LimitOrderInput({
+                    base: address(token1),
+                    quote: address(token2),
+                    price: 1e8,
+                    amount: 40,
+                    isMaker: true,
+                    n: 1,
+                    recipient: trader1
+                })
+            );
         uint32[] memory afterTailCancelAndAppend = book.getOrderIds(false, 1e8, 2);
         assertEq(afterTailCancelAndAppend[0], a.id, "head still the original first order");
         assertEq(afterTailCancelAndAppend[1], d.id, "newly appended order follows the surviving tail");
@@ -75,7 +136,17 @@ contract MatchingModeTest is BaseSetup {
         matchingEngine.cancelOrder(address(token1), address(token2), false, a.id);
         vm.prank(trader1);
         MatchingEngine.OrderResult memory e =
-            matchingEngine.limitSell(address(token1), address(token2), 1e8, 50, true, 1, trader1);
+            matchingEngine.limitSell(
+                IMatchingEngine.LimitOrderInput({
+                    base: address(token1),
+                    quote: address(token2),
+                    price: 1e8,
+                    amount: 50,
+                    isMaker: true,
+                    n: 1,
+                    recipient: trader1
+                })
+            );
         uint32[] memory afterHeadCancel = book.getOrderIds(false, 1e8, 2);
         assertEq(afterHeadCancel[0], d.id, "surviving order becomes new head");
         assertEq(afterHeadCancel[1], e.id, "newly appended order follows the new head");

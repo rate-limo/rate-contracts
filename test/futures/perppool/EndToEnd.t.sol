@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import {PerpEngineBaseSetup} from "../PerpEngineBaseSetup.sol";
 import {PerpPool} from "../../../src/futures/pools/PerpPool.sol";
 import {PerpEngine} from "../../../src/futures/PerpEngine.sol";
+import {IMatchingEngine} from "../../../src/exchange/interfaces/IMatchingEngine.sol";
 
 contract PerpEngineEndToEndTest is PerpEngineBaseSetup {
     function testAddPoolRevertsWhenQuoteIsNotAllowlistedStablecoin() public {
@@ -94,10 +95,30 @@ contract PerpEngineEndToEndTest is PerpEngineBaseSetup {
         vm.prank(trader1);
         stablecoin.approve(address(matchingEngine), 1000e18);
         vm.prank(trader1);
-        matchingEngine.limitBuy(address(token1), address(stablecoin), 80e8, 1000e18, true, 2, trader1);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(stablecoin),
+                price: 80e8,
+                amount: 1000e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
 
         vm.prank(trader2);
-        matchingEngine.limitSell(address(token1), address(stablecoin), 80e8, 10e18, true, 2, trader2);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(stablecoin),
+                price: 80e8,
+                amount: 10e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader2
+            })
+        );
 
         assertEq(matchingEngine.mktPrice(address(token1), address(stablecoin)), 80e8);
 

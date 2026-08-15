@@ -91,7 +91,17 @@ contract PoCDustClearFlagLiesTest is BaseSetup {
         vm.prank(trader1);
         sixDecQuote.approve(address(matchingEngine), makerDeposit);
         vm.prank(trader1);
-        matchingEngine.limitBuy(address(zeroDecBase), address(sixDecQuote), price, makerDeposit, true, 5, trader1);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(zeroDecBase),
+                quote: address(sixDecQuote),
+                price: price,
+                amount: makerDeposit,
+                isMaker: true,
+                n: 5,
+                recipient: trader1
+            })
+        );
 
         assertFalse(IOrderbook(pair).isEmpty(true, price), "maker order should be resting before the fill");
 
@@ -103,7 +113,17 @@ contract PoCDustClearFlagLiesTest is BaseSetup {
 
         vm.recordLogs();
         vm.prank(attacker);
-        matchingEngine.limitSell(address(zeroDecBase), address(sixDecQuote), price, fillAmount, true, 5, attacker);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(zeroDecBase),
+                quote: address(sixDecQuote),
+                price: price,
+                amount: fillAmount,
+                isMaker: true,
+                n: 5,
+                recipient: attacker
+            })
+        );
         (bool found, bool clearFlag) = _lastClearFlag(vm.getRecordedLogs());
 
         bool bookEmpty = IOrderbook(pair).isEmpty(true, price);
@@ -169,7 +189,17 @@ contract PoCDustClearFlagLiesTest is BaseSetup {
         vm.prank(trader1);
         quote6.approve(address(matchingEngine), makerDeposit);
         vm.prank(trader1);
-        matchingEngine.limitBuy(address(base18), address(quote6), price, makerDeposit, true, 5, trader1);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(base18),
+                quote: address(quote6),
+                price: price,
+                amount: makerDeposit,
+                isMaker: true,
+                n: 5,
+                recipient: trader1
+            })
+        );
 
         // The whole 20,000 deposit requires 6e12 base to clear (convert quote->base).
         // Deliver strictly LESS than that, so this is a partial fill and `clear` is
@@ -182,7 +212,17 @@ contract PoCDustClearFlagLiesTest is BaseSetup {
         vm.prank(trader2);
         base18.approve(address(matchingEngine), firstFill);
         vm.prank(trader2);
-        matchingEngine.limitSell(address(base18), address(quote6), price, firstFill, true, 5, trader2);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(base18),
+                quote: address(quote6),
+                price: price,
+                amount: firstFill,
+                isMaker: true,
+                n: 5,
+                recipient: trader2
+            })
+        );
 
         assertFalse(IOrderbook(pair).isEmpty(true, price), "remainder should still be resting");
         assertEq(
@@ -202,7 +242,17 @@ contract PoCDustClearFlagLiesTest is BaseSetup {
 
         vm.recordLogs();
         vm.prank(attacker);
-        matchingEngine.limitSell(address(base18), address(quote6), price, secondFill, true, 5, attacker);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(base18),
+                quote: address(quote6),
+                price: price,
+                amount: secondFill,
+                isMaker: true,
+                n: 5,
+                recipient: attacker
+            })
+        );
         Vm.Log[] memory logs = vm.getRecordedLogs();
 
         uint256 refunded = quote6.balanceOf(trader1) - makerQuoteBefore;

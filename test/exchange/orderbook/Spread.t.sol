@@ -15,6 +15,7 @@ import {WETH9} from "../../../src/mock/WETH9.sol";
 import {BaseSetup} from "../OrderbookBaseSetup.sol";
 import {console} from "forge-std/console.sol";
 import {stdStorage, StdStorage, Test} from "forge-std/Test.sol";
+import {IMatchingEngine} from "../../../src/exchange/interfaces/IMatchingEngine.sol";
 
 contract OrderSpreadTest is BaseSetup {
     function testLimitOrder() public {
@@ -25,12 +26,32 @@ contract OrderSpreadTest is BaseSetup {
         address quote = address(token2);
         console.log("Base/Quote Pair: ", matchingEngine.getPair(base, quote));
         vm.prank(trader1);
-        matchingEngine.limitBuy(base, quote, 3632e8, 100e18, true, 2, trader1);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: base,
+                quote: quote,
+                price: 3632e8,
+                amount: 100e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
         book = Orderbook(payable(matchingEngine.getPair(base, quote)));
         (uint256 bidHead, uint256 askHead) = book.heads();
         console.log(bidHead, askHead);
         vm.prank(trader2);
-        matchingEngine.limitSell(base, quote, 10000e8, 100e18, true, 2, trader2);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: base,
+                quote: quote,
+                price: 10000e8,
+                amount: 100e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader2
+            })
+        );
         console.log(matchingEngine.mktPrice(base, quote));
     }
 
@@ -42,12 +63,32 @@ contract OrderSpreadTest is BaseSetup {
         address quote = address(token2);
         console.log("Base/Quote Pair: ", matchingEngine.getPair(base, quote));
         vm.prank(trader1);
-        matchingEngine.limitSell(base, quote, 3632e8, 100e18, true, 2, trader1);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: base,
+                quote: quote,
+                price: 3632e8,
+                amount: 100e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
         book = Orderbook(payable(matchingEngine.getPair(base, quote)));
         (uint256 bidHead, uint256 askHead) = book.heads();
         console.log(bidHead, askHead);
         vm.prank(trader2);
-        matchingEngine.limitSell(base, quote, 0e8, 100e18, true, 2, trader2);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: base,
+                quote: quote,
+                price: 0e8,
+                amount: 100e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader2
+            })
+        );
         console.log(matchingEngine.mktPrice(base, quote));
     }
 
@@ -57,8 +98,28 @@ contract OrderSpreadTest is BaseSetup {
         vm.prank(trader1);
         address base = address(token1);
         address quote = address(token2);
-        matchingEngine.limitSell(base, quote, 3632e8, 100e18, true, 2, trader1);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: base,
+                quote: quote,
+                price: 3632e8,
+                amount: 100e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
         vm.prank(trader1);
-        matchingEngine.limitBuy(base, quote, 3632e8, 100e18, true, 2, trader1);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: base,
+                quote: quote,
+                price: 3632e8,
+                amount: 100e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
     }
 }

@@ -5,6 +5,7 @@ import {BaseSetup} from "../OrderbookBaseSetup.sol";
 import {Orderbook} from "../../../src/exchange/orderbooks/Orderbook.sol";
 import {ExchangeOrderbook} from "../../../src/exchange/libraries/ExchangeOrderbook.sol";
 import {console} from "forge-std/console.sol";
+import {IMatchingEngine} from "../../../src/exchange/interfaces/IMatchingEngine.sol";
 
 /// The queue jam is a property of the MATCHING MODE, not of the orderbook.
 ///
@@ -32,7 +33,15 @@ contract MatchingModeQueueCost is BaseSetup {
         for (uint256 i = 0; i < count; i++) {
             vm.prank(trader1);
             matchingEngine.limitSell(
-                address(token1), address(token2), PRICE, startAmount - i * 1e6, true, 2, trader1
+                IMatchingEngine.LimitOrderInput({
+                    base: address(token1),
+                    quote: address(token2),
+                    price: PRICE,
+                    amount: startAmount - i * 1e6,
+                    isMaker: true,
+                    n: 2,
+                    recipient: trader1
+                })
             );
         }
     }
@@ -41,14 +50,34 @@ contract MatchingModeQueueCost is BaseSetup {
         _stack(1, 1000e18);
         uint256 g0 = gasleft();
         vm.prank(trader1);
-        matchingEngine.limitSell(address(token1), address(token2), PRICE, 1e18, true, 2, trader1);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: PRICE,
+                amount: 1e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
         shallow = g0 - gasleft();
 
         _stack(DEPTH, 900e18);
 
         g0 = gasleft();
         vm.prank(trader1);
-        matchingEngine.limitSell(address(token1), address(token2), PRICE, 1e17, true, 2, trader1);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: PRICE,
+                amount: 1e17,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
         deep = g0 - gasleft();
     }
 

@@ -21,6 +21,7 @@ import {Upgrades} from "openzeppelin-foundry-upgrades/Upgrades.sol";
 import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {WETH9} from "../../src/mock/WETH9.sol";
 import {BulkSender} from "../../src/mock/BulkSender.sol";
+import {IMatchingEngine} from "../../src/exchange/interfaces/IMatchingEngine.sol";
 
 contract Deployer is Script {
     function _setDeployer() internal {
@@ -145,13 +146,15 @@ contract MarketBuy is Deployer {
         _setDeployer();
         MatchingEngine matchingEngine = MatchingEngine(payable(engine));
         matchingEngine.marketBuy(
-            address(0x33f6552F37772e42A31d03233812d2dC6afd2f97),
-            address(0x0ED782B8079529f7385c3eDA9fAf1EaA0DbC6a17),
-            17390200,
-            true,
-            1,
-            address(0x8E9e786f757B881C7B456682Ae7D2a06820220b1),
-            10000000
+            IMatchingEngine.MarketOrderInput({
+                base: address(0x33f6552F37772e42A31d03233812d2dC6afd2f97),
+                quote: address(0x0ED782B8079529f7385c3eDA9fAf1EaA0DbC6a17),
+                amount: 17390200,
+                isMaker: true,
+                n: 1,
+                recipient: address(0x8E9e786f757B881C7B456682Ae7D2a06820220b1),
+                slippageLimit: 10000000
+            })
         );
         vm.stopBroadcast();
     }

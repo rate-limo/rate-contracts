@@ -102,7 +102,16 @@ abstract contract SteadyRouterBase is PoolBaseSetup {
 
         // warm-up route (separate tx from the measurement): commits steady fee/recipient state
         vm.prank(trader1);
-        router.swap(_path(), 1e18, 0, trader1, ISwapRouter.RemainderMode.Refund, empty);
+        router.swap(
+            ISwapRouter.SwapInput({
+                path: _path(),
+                amountIn: 1e18,
+                minAmountOut: 0,
+                recipient: trader1,
+                remainderMode: ISwapRouter.RemainderMode.Refund,
+                remainderConfig: empty
+            })
+        );
     }
 
     function _path() internal view returns (address[] memory path) {
@@ -121,7 +130,16 @@ abstract contract SteadyRouterBase is PoolBaseSetup {
     function testSteadyRoute() public {
         vm.prank(trader1);
         uint256 g0 = gasleft();
-        uint256 amountOut = router.swap(_path(), 50e18, 0, trader1, ISwapRouter.RemainderMode.Refund, empty);
+        uint256 amountOut = router.swap(
+            ISwapRouter.SwapInput({
+                path: _path(),
+                amountIn: 50e18,
+                minAmountOut: 0,
+                recipient: trader1,
+                remainderMode: ISwapRouter.RemainderMode.Refund,
+                remainderConfig: empty
+            })
+        );
         uint256 used = g0 - gasleft();
         require(amountOut > 0, "no out");
         console2.log(hops(), used);

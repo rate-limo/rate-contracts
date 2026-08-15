@@ -32,9 +32,29 @@ contract StaleLmpMarketBuyTest is BaseSetup {
         // the admin updatePair path -- that writes lmp without touching the book,
         // which is precisely the "market price above the best ask" state.
         vm.prank(trader1);
-        matchingEngine.limitSell(address(token1), address(token2), 900e8, 1e18, true, 5, trader1);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 900e8,
+                amount: 1e18,
+                isMaker: true,
+                n: 5,
+                recipient: trader1
+            })
+        );
         vm.prank(trader1);
-        matchingEngine.limitSell(address(token1), address(token2), 950e8, 1e18, true, 5, trader1);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 950e8,
+                amount: 1e18,
+                isMaker: true,
+                n: 5,
+                recipient: trader1
+            })
+        );
 
         matchingEngine.updatePair(address(token1), address(token2), 1000e8, 0);
 
@@ -62,13 +82,15 @@ contract StaleLmpMarketBuyTest is BaseSetup {
         token2.approve(address(matchingEngine), 5000e18);
         vm.prank(trader2);
         matchingEngine.marketBuy(
-            address(token1),
-            address(token2),
-            2000e18,
-            true,
-            5,
-            trader2,
-            2000000
+            IMatchingEngine.MarketOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                amount: 2000e18,
+                isMaker: true,
+                n: 5,
+                recipient: trader2,
+                slippageLimit: 2000000
+            })
         );
 
         uint256 baseReceived = token1.balanceOf(trader2) - baseBefore;
@@ -100,11 +122,31 @@ contract StaleLmpMarketBuyTest is BaseSetup {
 
         // one ask below, one bid below it, so both heads exist
         vm.prank(trader1);
-        matchingEngine.limitSell(address(token1), address(token2), 950e8, 1e18, true, 5, trader1);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 950e8,
+                amount: 1e18,
+                isMaker: true,
+                n: 5,
+                recipient: trader1
+            })
+        );
         vm.prank(trader2);
         token2.approve(address(matchingEngine), 5000e18);
         vm.prank(trader2);
-        matchingEngine.limitBuy(address(token1), address(token2), 800e8, 100e18, true, 5, trader2);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 800e8,
+                amount: 100e18,
+                isMaker: true,
+                n: 5,
+                recipient: trader2
+            })
+        );
 
         matchingEngine.updatePair(address(token1), address(token2), 1000e8, 0);
 
@@ -120,7 +162,17 @@ contract StaleLmpMarketBuyTest is BaseSetup {
 
         uint256 baseBefore = token1.balanceOf(trader2);
         vm.prank(trader2);
-        matchingEngine.marketBuy(address(token1), address(token2), 2000e18, true, 5, trader2, 2000000);
+        matchingEngine.marketBuy(
+            IMatchingEngine.MarketOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                amount: 2000e18,
+                isMaker: true,
+                n: 5,
+                recipient: trader2,
+                slippageLimit: 2000000
+            })
+        );
         uint256 received = token1.balanceOf(trader2) - baseBefore;
 
         console.log("base received", received);
@@ -141,7 +193,17 @@ contract StaleLmpMarketBuyTest is BaseSetup {
         );
 
         vm.prank(trader1);
-        matchingEngine.limitSell(address(token1), address(token2), 900e8, 1e18, true, 5, trader1);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 900e8,
+                amount: 1e18,
+                isMaker: true,
+                n: 5,
+                recipient: trader1
+            })
+        );
 
         // restore lmp above the ask (see note in the test above)
         matchingEngine.updatePair(address(token1), address(token2), 1000e8, 0);
@@ -153,13 +215,16 @@ contract StaleLmpMarketBuyTest is BaseSetup {
         token2.approve(address(matchingEngine), 5000e18);
         vm.prank(trader2);
         matchingEngine.marketBuy(
-            address(token1),
-            address(token2),
-            950e18,
-            false, // isMaker false: no remainder resting, isolate the match path
-            5,
-            trader2,
-            2000000
+            IMatchingEngine.MarketOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                amount: 950e18,
+                isMaker: false,
+                // isMaker false: no remainder resting, isolate the match path
+                n: 5,
+                recipient: trader2,
+                slippageLimit: 2000000
+            })
         );
 
         uint256 lmpAfter = IOrderbook(_pair()).lmp();

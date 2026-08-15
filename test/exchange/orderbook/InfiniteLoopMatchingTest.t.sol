@@ -13,6 +13,7 @@ import {WETH9} from "../../../src/mock/WETH9.sol";
 import {BaseSetup} from "../OrderbookBaseSetup.sol";
 import {console} from "forge-std/console.sol";
 import {stdStorage, StdStorage, Test} from "forge-std/Test.sol";
+import {IMatchingEngine} from "../../../src/exchange/interfaces/IMatchingEngine.sol";
 
 // Tests for the infinite-loop bug in _limitOrder where the i==0 check fails
 // to detect "no progress" after the first iteration.
@@ -38,10 +39,30 @@ contract InfiniteLoopMatchingTest is BaseSetup {
 
         // Place ask orders at two price levels within the spread
         vm.prank(trader1);
-        matchingEngine.limitSell(address(token1), address(token2), 50, 5e7, true, 10, trader1);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 50,
+                amount: 5e7,
+                isMaker: true,
+                n: 10,
+                recipient: trader1
+            })
+        );
 
         vm.prank(trader1);
-        matchingEngine.limitSell(address(token1), address(token2), 51, 5e7, true, 10, trader1);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 51,
+                amount: 5e7,
+                isMaker: true,
+                n: 10,
+                recipient: trader1
+            })
+        );
 
         uint256 token1BalBefore = token1.balanceOf(trader2);
 
@@ -51,7 +72,17 @@ contract InfiniteLoopMatchingTest is BaseSetup {
         // With bug: i==0 is false after first iter, clearEmptyHead is still called (correct here)
         // The fix ensures that if _matchAt returns unchanged i (no progress), we stop immediately
         vm.prank(trader2);
-        matchingEngine.limitBuy(address(token1), address(token2), 60, 1e18, false, 10, trader2);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 60,
+                amount: 1e18,
+                isMaker: false,
+                n: 10,
+                recipient: trader2
+            })
+        );
 
         // Both ask orders should now be empty
         assertTrue(book.isEmpty(false, 50), "Ask at price 50 should be consumed");
@@ -75,10 +106,30 @@ contract InfiniteLoopMatchingTest is BaseSetup {
         // The sell deposits 3e14 token1, which exceeds what each individual bid can buy,
         // so both bids are fully consumed (remaining never hits 0 before the second bid).
         vm.prank(trader2);
-        matchingEngine.limitBuy(address(token1), address(token2), 50, 5e7, true, 10, trader2);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 50,
+                amount: 5e7,
+                isMaker: true,
+                n: 10,
+                recipient: trader2
+            })
+        );
 
         vm.prank(trader2);
-        matchingEngine.limitBuy(address(token1), address(token2), 49, 5e7, true, 10, trader2);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 49,
+                amount: 5e7,
+                isMaker: true,
+                n: 10,
+                recipient: trader2
+            })
+        );
 
         uint256 token2BalBefore = token2.balanceOf(trader1);
 
@@ -86,7 +137,17 @@ contract InfiniteLoopMatchingTest is BaseSetup {
         // First outer iteration: price 50 consumed (bid buys 1e14 token1), i goes 0→1
         // Second outer iteration: price 49 consumed (bid buys ~1.02e14 token1), i goes 1→2
         vm.prank(trader1);
-        matchingEngine.limitSell(address(token1), address(token2), 45, 3e14, false, 10, trader1);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 45,
+                amount: 3e14,
+                isMaker: false,
+                n: 10,
+                recipient: trader1
+            })
+        );
 
         // Both bid orders should now be empty
         assertTrue(book.isEmpty(true, 50), "Bid at price 50 should be consumed");
@@ -109,16 +170,56 @@ contract InfiniteLoopMatchingTest is BaseSetup {
         // limitPrice = 50 * (100000000 + 2000000) / 100000000 = 51
         // 52 > 51, so only 50 and 51 match
         vm.prank(trader1);
-        matchingEngine.limitSell(address(token1), address(token2), 50, 5e7, true, 10, trader1);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 50,
+                amount: 5e7,
+                isMaker: true,
+                n: 10,
+                recipient: trader1
+            })
+        );
         vm.prank(trader1);
-        matchingEngine.limitSell(address(token1), address(token2), 51, 5e7, true, 10, trader1);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 51,
+                amount: 5e7,
+                isMaker: true,
+                n: 10,
+                recipient: trader1
+            })
+        );
         vm.prank(trader1);
-        matchingEngine.limitSell(address(token1), address(token2), 52, 5e7, true, 10, trader1);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 52,
+                amount: 5e7,
+                isMaker: true,
+                n: 10,
+                recipient: trader1
+            })
+        );
 
         // buy with n=10 (enough headroom) - the outer loop runs twice (for prices 50 and 51)
         // If the i==0 check caused any issue (stale price, no-progress loop), this reverts OOG
         vm.prank(trader2);
-        matchingEngine.limitBuy(address(token1), address(token2), 60, 1e18, false, 10, trader2);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 60,
+                amount: 1e18,
+                isMaker: false,
+                n: 10,
+                recipient: trader2
+            })
+        );
 
         // Prices 50 and 51 consumed; 52 remains (outside spread)
         assertTrue(book.isEmpty(false, 50), "Price 50 ask should be consumed");

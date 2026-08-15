@@ -7,6 +7,7 @@ import {ISwapRouter} from "../../src/swap/interfaces/ISwapRouter.sol";
 import {IPool} from "../../src/swap/interfaces/IPool.sol";
 import {IOrderbook} from "../../src/exchange/interfaces/IOrderbook.sol";
 import {ORACLE_CARDINALITY} from "../../src/exchange/libraries/Oracle.sol";
+import {IMatchingEngine} from "../../src/exchange/interfaces/IMatchingEngine.sol";
 
 /// Guards the edge cases that matched-price reporting opened and that the five mitigations
 /// close. Each test states the pre-mitigation value it replaced, so a regression reads as a
@@ -62,7 +63,14 @@ contract SwapPriceReportEdgesTest is PoolBaseSetup {
         vm.startPrank(trader1);
         token2.approve(address(router), amountIn);
         out = router.swap(
-            _path(address(token2), address(token1)), amountIn, 0, trader1, ISwapRouter.RemainderMode.Refund, empty
+            ISwapRouter.SwapInput({
+                path: _path(address(token2), address(token1)),
+                amountIn: amountIn,
+                minAmountOut: 0,
+                recipient: trader1,
+                remainderMode: ISwapRouter.RemainderMode.Refund,
+                remainderConfig: empty
+            })
         );
         vm.stopPrank();
     }
@@ -71,7 +79,14 @@ contract SwapPriceReportEdgesTest is PoolBaseSetup {
         vm.startPrank(trader1);
         token1.approve(address(router), amountIn);
         out = router.swap(
-            _path(address(token1), address(token2)), amountIn, 0, trader1, ISwapRouter.RemainderMode.Refund, empty
+            ISwapRouter.SwapInput({
+                path: _path(address(token1), address(token2)),
+                amountIn: amountIn,
+                minAmountOut: 0,
+                recipient: trader1,
+                remainderMode: ISwapRouter.RemainderMode.Refund,
+                remainderConfig: empty
+            })
         );
         vm.stopPrank();
     }
@@ -162,7 +177,17 @@ contract SwapPriceReportEdgesTest is PoolBaseSetup {
     /// price, and `newLmp == lmp` short-circuits before anything is written.
     function testZeroSpreadNowFreezesThePrice() public {
         vm.prank(trader2);
-        matchingEngine.limitBuy(address(token1), address(token2), 110e8, 100e18, true, 1, trader2);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 110e8,
+                amount: 100e18,
+                isMaker: true,
+                n: 1,
+                recipient: trader2
+            })
+        );
         assertEq(_lmp(), 110e8);
 
         matchingEngine.setSpread(address(token1), address(token2), 0, 0, true);
@@ -181,7 +206,17 @@ contract SwapPriceReportEdgesTest is PoolBaseSetup {
     /// in one swap. That slowdown is the price of the bound, and it is deliberate.
     function testSellRailBitesAtTheProductionSpread() public {
         vm.prank(trader2);
-        matchingEngine.limitSell(address(token1), address(token2), 91e8, 10e18, true, 1, trader2);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 91e8,
+                amount: 10e18,
+                isMaker: true,
+                n: 1,
+                recipient: trader2
+            })
+        );
         assertEq(_lmp(), 91e8);
 
         matchingEngine.setSpread(address(token1), address(token2), PROD_SPREAD, PROD_SPREAD, true);
@@ -272,9 +307,29 @@ contract SwapPriceReportEdgesTest is PoolBaseSetup {
     /// property rather than becoming a surprise.
     function testHealthyBookWithNoPoolLiquidityIsStillUnswappable() public {
         vm.prank(trader2);
-        matchingEngine.limitSell(address(token1), address(token2), 105e8, 50e18, true, 1, trader2);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 105e8,
+                amount: 50e18,
+                isMaker: true,
+                n: 1,
+                recipient: trader2
+            })
+        );
         vm.prank(trader2);
-        matchingEngine.limitBuy(address(token1), address(token2), 95e8, 50e18, true, 1, trader2);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 95e8,
+                amount: 50e18,
+                isMaker: true,
+                n: 1,
+                recipient: trader2
+            })
+        );
 
         vm.prank(positionManager);
         pool.removeLiquidity(1, 1000e18, 1000e18, lp1);
@@ -283,7 +338,14 @@ contract SwapPriceReportEdgesTest is PoolBaseSetup {
         token2.approve(address(router), 1e18);
         vm.expectRevert(abi.encodeWithSelector(IPool.NoLiquidityInRange.selector, LISTED));
         router.swap(
-            _path(address(token2), address(token1)), 1e18, 0, trader1, ISwapRouter.RemainderMode.Refund, empty
+            ISwapRouter.SwapInput({
+                path: _path(address(token2), address(token1)),
+                amountIn: 1e18,
+                minAmountOut: 0,
+                recipient: trader1,
+                remainderMode: ISwapRouter.RemainderMode.Refund,
+                remainderConfig: empty
+            })
         );
         vm.stopPrank();
     }

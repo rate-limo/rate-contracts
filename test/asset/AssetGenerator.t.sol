@@ -687,6 +687,22 @@ contract AssetGeneratorTest is Test {
         assertEq(takerFee, 100_000);
     }
 
+    function test_pairConfigRole_canKeepMakersFreeOnExistingPair() public {
+        address base = makeAddr("freeMakerBase");
+        address quote = makeAddr("freeMakerQuote");
+        address pair = makeAddr("freeMakerPair");
+        engine.setPairFor(base, quote, pair);
+
+        vm.prank(admin);
+        gen.setExistingPairTradingConfig(base, quote, 50, 0, 100_000);
+
+        (uint16 slippage, uint32 makerFee, uint32 takerFee, bool configured) = gen.pairPolicies(pair);
+        assertTrue(configured);
+        assertEq(slippage, 50);
+        assertEq(makerFee, 0);
+        assertEq(takerFee, 100_000);
+    }
+
     function test_existingPairPolicy_rejectsCallerWithoutPairConfigRole() public {
         address base = makeAddr("accessBase");
         address quote = makeAddr("accessQuote");

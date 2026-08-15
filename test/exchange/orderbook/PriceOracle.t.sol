@@ -5,6 +5,7 @@ import {ExchangeOrderbook} from "../../../src/exchange/libraries/ExchangeOrderbo
 import {BaseSetup} from "../OrderbookBaseSetup.sol";
 import {Orderbook} from "../../../src/exchange/orderbooks/Orderbook.sol";
 import {Oracle} from "../../../src/exchange/libraries/Oracle.sol";
+import {IMatchingEngine} from "../../../src/exchange/interfaces/IMatchingEngine.sol";
 
 /// @notice Integration-level tests for `Orderbook.twap()` against the *real* MatchingEngine/
 /// Orderbook, using actual trades rather than the isolated ring-buffer unit tests in
@@ -21,9 +22,29 @@ contract PriceOracleTest is BaseSetup {
     /// observation) to exactly `price`.
     function _tradeAt(uint256 price) internal {
         vm.prank(trader1);
-        matchingEngine.limitSell(address(token1), address(token2), price, 1e18, true, 2, trader1);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: price,
+                amount: 1e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
         vm.prank(trader2);
-        matchingEngine.limitBuy(address(token1), address(token2), price, 1e18, true, 2, trader2);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: price,
+                amount: 1e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader2
+            })
+        );
     }
 
     function testTwapRevertsRightAfterListing() public {

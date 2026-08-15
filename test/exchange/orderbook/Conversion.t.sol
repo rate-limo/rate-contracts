@@ -15,6 +15,7 @@ import {WETH9} from "../../../src/mock/WETH9.sol";
 import {BaseSetup} from "../OrderbookBaseSetup.sol";
 import {console} from "forge-std/console.sol";
 import {stdStorage, StdStorage, Test} from "forge-std/Test.sol";
+import {IMatchingEngine} from "../../../src/exchange/interfaces/IMatchingEngine.sol";
 
 // test cases for orderbooks
 contract ConversionTest is BaseSetup {
@@ -25,7 +26,17 @@ contract ConversionTest is BaseSetup {
         // placeBid or placeAsk two of them is using the _insertId function it will revert
         // because the program will enter the "if (amount > self.orders[head].depositAmount)."
         // statement, and eventually, it will cause an infinite loop.
-        matchingEngine.limitSell(address(token1), address(token2), 0, 10, true, 2, trader1);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 0,
+                amount: 10,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
     }
 
     function testInvalidConversion() public {
@@ -40,9 +51,29 @@ contract ConversionTest is BaseSetup {
         uint256 trader2Token1BalanceBeforeTrade = token1.balanceOf(address(trader2));
         uint256 trader2Token2BalanceBeforeTrade = token2.balanceOf(address(trader2));
         vm.prank(trader1);
-        matchingEngine.limitBuy(address(token1), address(token2), 1, 100e18, true, 2, trader1);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 1,
+                amount: 100e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
         vm.prank(trader2);
-        matchingEngine.limitSell(address(token1), address(token2), 1, 100e18, true, 2, trader2);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 1,
+                amount: 100e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader2
+            })
+        );
         uint256 trader1Token1BalanceAfterTrade = token1.balanceOf(address(trader1));
         uint256 trader1Token2BalanceAfterTrade = token2.balanceOf(address(trader1));
         uint256 trader2Token1BalanceAfterTrade = token1.balanceOf(address(trader2));
@@ -62,9 +93,29 @@ contract ConversionTest is BaseSetup {
         trader2Token1BalanceBeforeTrade = token1.balanceOf(address(trader2));
         trader2Token2BalanceBeforeTrade = token2.balanceOf(address(trader2));
         vm.prank(trader2);
-        matchingEngine.limitSell(address(token1), address(token2), 1, 100e18, true, 2, trader2);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 1,
+                amount: 100e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader2
+            })
+        );
         vm.prank(trader1);
-        matchingEngine.limitBuy(address(token1), address(token2), 1, 100e18, true, 2, trader1);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 1,
+                amount: 100e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
         trader1Token1BalanceAfterTrade = token1.balanceOf(address(trader1));
         trader1Token2BalanceAfterTrade = token2.balanceOf(address(trader1));
         trader2Token1BalanceAfterTrade = token1.balanceOf(address(trader2));
@@ -91,10 +142,30 @@ contract ConversionTest is BaseSetup {
 
         // deposit 10000e8(9997e8 after fee) for buying 10e18 token1 for 1000 token2 * amount
         vm.prank(trader1);
-        matchingEngine.limitBuy(address(token1), address(btc), 1000e8, 10000e8, true, 5, trader1);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(btc),
+                price: 1000e8,
+                amount: 10000e8,
+                isMaker: true,
+                n: 5,
+                recipient: trader1
+            })
+        );
         // deposit 10e18(9.997e18 after fee) for selling token1 for 1000 token1 * amount
         vm.prank(trader2);
-        matchingEngine.limitSell(address(token1), address(btc), 1000e8, 10e18, true, 5, trader2);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(btc),
+                price: 1000e8,
+                amount: 10e18,
+                isMaker: true,
+                n: 5,
+                recipient: trader2
+            })
+        );
 
         // after trade balances
         uint256 afterTrader2T1Balance = token1.balanceOf(address(trader2));
@@ -140,7 +211,17 @@ contract ConversionTest is BaseSetup {
 
         // deposit 10e18(9.997e18 after fee) for selling token1 for 1000 token1 * amount
         vm.prank(trader2);
-        matchingEngine.limitSell(address(token1), address(btc), 1000e8, 10e18, true, 5, trader2);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(btc),
+                price: 1000e8,
+                amount: 10e18,
+                isMaker: true,
+                n: 5,
+                recipient: trader2
+            })
+        );
 
         bool isEmpty =
             Orderbook(payable(orderbookFactory.getPair(address(token1), address(btc)))).isEmpty(false, 1000e8);
@@ -148,7 +229,17 @@ contract ConversionTest is BaseSetup {
 
         // deposit 10000e8(9997e8 after fee) for buying 10e18 token1 for 1000 token2 * amount
         vm.prank(trader1);
-        matchingEngine.limitBuy(address(token1), address(btc), 1000e8, 10000e8, true, 5, trader1);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(btc),
+                price: 1000e8,
+                amount: 10000e8,
+                isMaker: true,
+                n: 5,
+                recipient: trader1
+            })
+        );
 
         // after trade balances
         uint256 afterTrader2T1Balance = token1.balanceOf(address(trader2));
@@ -194,10 +285,30 @@ contract ConversionTest is BaseSetup {
 
         // deposit 10000e18(9997e18 after fee) for buying 10e8 token1 for 1000 token2 * amount
         vm.prank(trader1);
-        matchingEngine.limitBuy(address(btc), address(token2), 1000e8, 10000e18, true, 5, trader1);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(btc),
+                quote: address(token2),
+                price: 1000e8,
+                amount: 10000e18,
+                isMaker: true,
+                n: 5,
+                recipient: trader1
+            })
+        );
         // deposit 10e8(9.997e8 after fee) for selling token1 for 1000 token1 * amount
         vm.prank(trader2);
-        matchingEngine.limitSell(address(btc), address(token2), 1000e8, 10e8, true, 5, trader2);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(btc),
+                quote: address(token2),
+                price: 1000e8,
+                amount: 10e8,
+                isMaker: true,
+                n: 5,
+                recipient: trader2
+            })
+        );
 
         // after trade balances
         uint256 afterTrader2T2Balance = token2.balanceOf(address(trader2));
@@ -244,10 +355,30 @@ contract ConversionTest is BaseSetup {
 
         // deposit 10e8(9.997e8 after fee) for selling token1 for 1000 token1 * amount
         vm.prank(trader2);
-        matchingEngine.limitSell(address(btc), address(token2), 1000e8, 10e8, true, 5, trader2);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(btc),
+                quote: address(token2),
+                price: 1000e8,
+                amount: 10e8,
+                isMaker: true,
+                n: 5,
+                recipient: trader2
+            })
+        );
         // deposit 10000e18(9997e18 after fee) for buying 10e8 token1 for 1000 token2 * amount
         vm.prank(trader1);
-        matchingEngine.limitBuy(address(btc), address(token2), 1000e8, 10000e18, true, 5, trader1);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(btc),
+                quote: address(token2),
+                price: 1000e8,
+                amount: 10000e18,
+                isMaker: true,
+                n: 5,
+                recipient: trader1
+            })
+        );
 
         // after trade balances
         uint256 afterTrader2T2Balance = token2.balanceOf(address(trader2));
@@ -294,10 +425,30 @@ contract ConversionTest is BaseSetup {
 
         // deposit 10000e18(9997e18 after fee) for buying token1 for 1000 token2 * amount
         vm.prank(trader1);
-        matchingEngine.limitBuy(address(token1), address(token2), 1000e8, 10000e18, true, 5, trader1);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 1000e8,
+                amount: 10000e18,
+                isMaker: true,
+                n: 5,
+                recipient: trader1
+            })
+        );
         // deposit 10e18(9.997e18 after fee) for selling token1 for 1000 token2 * amount
         vm.prank(trader2);
-        matchingEngine.limitSell(address(token1), address(token2), 1000e8, 10e18, true, 5, trader2);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 1000e8,
+                amount: 10e18,
+                isMaker: true,
+                n: 5,
+                recipient: trader2
+            })
+        );
 
         // after trade balances
         uint256 afterTrader2T2Balance = token2.balanceOf(address(trader2));
@@ -344,10 +495,30 @@ contract ConversionTest is BaseSetup {
 
         // deposit 10e18(9.997e18 after fee) for selling token1 for 1000 token2 * amount
         vm.prank(trader2);
-        matchingEngine.limitSell(address(token1), address(token2), 1000e8, 10e18, true, 5, trader2);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 1000e8,
+                amount: 10e18,
+                isMaker: true,
+                n: 5,
+                recipient: trader2
+            })
+        );
         // deposit 10000e18(9997e18 after fee) for buying token1 for 1000 token2 * amount
         vm.prank(trader1);
-        matchingEngine.limitBuy(address(token1), address(token2), 1000e8, 10000e18, true, 5, trader1);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 1000e8,
+                amount: 10000e18,
+                isMaker: true,
+                n: 5,
+                recipient: trader1
+            })
+        );
 
         // after trade balances
         uint256 afterTrader2T2Balance = token2.balanceOf(address(trader2));

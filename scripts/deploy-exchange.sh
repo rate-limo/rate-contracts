@@ -56,28 +56,59 @@ done
 
 # ── chain config table ────────────────────────────────────────────────────────
 # Format: SCRIPT_FILE:CONTRACT_NAME:RPC_ENV_VAR:DEPLOYER_KEY_ENV_VAR
-declare -A CHAIN_CONFIG
-CHAIN_CONFIG[base]="Base.s.sol:DeployExchangeMainnetContracts:BASE_RPC_URL:LINEA_TESTNET_DEPLOYER_KEY"
-CHAIN_CONFIG[fraxtal]="Fraxtal.s.sol:DeployExchangeMainnetContracts:FRAXTAL_RPC_URL:LINEA_TESTNET_DEPLOYER_KEY"
-CHAIN_CONFIG[rise]="RiseTestnet.s.sol:DeployExchangeMainnetContracts:RISE_RPC_URL:LINEA_TESTNET_DEPLOYER_KEY"
-CHAIN_CONFIG[monad]="MonadTestnet.s.sol:DeployExchangeMainnetContracts:MONAD_RPC_URL:LINEA_TESTNET_DEPLOYER_KEY"
-CHAIN_CONFIG[somnia-mainnet]="SomniaMainnet.s.sol:DeployExchangeMainnetContracts:SOMNIA_MAINNET_RPC_URL:LINEA_TESTNET_DEPLOYER_KEY"
-CHAIN_CONFIG[somnia-testnet]="SomniaTestnet.s.sol:DeployExchangeMainnetContracts:SOMNIA_TESTNET_RPC_URL:LINEA_TESTNET_DEPLOYER_KEY"
-CHAIN_CONFIG[megaeth]="MegaETHTestnet.s.sol:DeployExchangeMainnetContracts:MEGAETH_RPC_URL:LINEA_TESTNET_DEPLOYER_KEY"
-CHAIN_CONFIG[ink]="InkSepolia.s.sol:DeployExchangeMainnetContracts:INK_RPC_URL:LINEA_TESTNET_DEPLOYER_KEY"
-CHAIN_CONFIG[story]="Story.s.sol:DeployExchangeMainnetContracts:STORY_RPC_URL:LINEA_TESTNET_DEPLOYER_KEY"
-CHAIN_CONFIG[ethereum]="Ethereum.s.sol:DeployexchangeMainnetsrc:ETHEREUM_RPC_URL:OUTSOURCING_DEPLOYER_KEY"
+#
+# The key env var is PER CHAIN because each script/exchange/*.s.sol reads its own
+# name via vm.envUint -- the wrapper only validates and forwards it, so a name
+# here that disagrees with the Solidity fails inside forge, not in this script.
+# rise did disagree: it named LINEA_TESTNET_DEPLOYER_KEY while RiseTestnet.s.sol
+# reads RISE_TESTNET_DEPLOYER_KEY. Eight other chains genuinely do share the
+# LINEA name. The launch scripts are a separate family and read DEPLOYER_KEY.
+# Associative arrays need bash 4; macOS ships 3.2 and this script is run from
+# macOS more often than anywhere else, so the table is a case statement. It
+# previously used `declare -A` and simply could not run on a Mac at all.
+# Format: SCRIPT_FILE:CONTRACT_NAME:RPC_ENV_VAR:DEPLOYER_KEY_ENV_VAR
+#
+# The key env var is PER CHAIN because each script/exchange/*.s.sol reads its own
+# name via vm.envUint -- the wrapper only validates and forwards it, so a name
+# here that disagrees with the Solidity fails inside forge, not in this script.
+# rise did disagree: it named LINEA_TESTNET_DEPLOYER_KEY while RiseTestnet.s.sol
+# reads RISE_TESTNET_DEPLOYER_KEY. Eight other chains genuinely do share the
+# LINEA name. The launch scripts are a separate family and read DEPLOYER_KEY.
+CHAIN_NAMES="base fraxtal rise monad somnia-mainnet somnia-testnet megaeth ink story ethereum"
 
-[[ -z "${CHAIN_CONFIG[$CHAIN]+x}" ]] && error "unknown chain '$CHAIN'. Valid: ${!CHAIN_CONFIG[*]}"
+chain_config() {
+  case "$1" in
+    base) printf %s "Base.s.sol:DeployExchangeMainnetContracts:BASE_RPC_URL:LINEA_TESTNET_DEPLOYER_KEY" ;;
+    fraxtal) printf %s "Fraxtal.s.sol:DeployExchangeMainnetContracts:FRAXTAL_RPC_URL:LINEA_TESTNET_DEPLOYER_KEY" ;;
+    rise) printf %s "RiseTestnet.s.sol:DeployExchangeMainnetContracts:RISE_RPC_URL:RISE_TESTNET_DEPLOYER_KEY" ;;
+    monad) printf %s "MonadTestnet.s.sol:DeployExchangeMainnetContracts:MONAD_RPC_URL:LINEA_TESTNET_DEPLOYER_KEY" ;;
+    somnia-mainnet) printf %s "SomniaMainnet.s.sol:DeployExchangeMainnetContracts:SOMNIA_MAINNET_RPC_URL:LINEA_TESTNET_DEPLOYER_KEY" ;;
+    somnia-testnet) printf %s "SomniaTestnet.s.sol:DeployExchangeMainnetContracts:SOMNIA_TESTNET_RPC_URL:LINEA_TESTNET_DEPLOYER_KEY" ;;
+    megaeth) printf %s "MegaETHTestnet.s.sol:DeployExchangeMainnetContracts:MEGAETH_RPC_URL:LINEA_TESTNET_DEPLOYER_KEY" ;;
+    ink) printf %s "InkSepolia.s.sol:DeployExchangeMainnetContracts:INK_RPC_URL:LINEA_TESTNET_DEPLOYER_KEY" ;;
+    story) printf %s "Story.s.sol:DeployExchangeMainnetContracts:STORY_RPC_URL:LINEA_TESTNET_DEPLOYER_KEY" ;;
+    ethereum) printf %s "Ethereum.s.sol:DeployexchangeMainnetsrc:ETHEREUM_RPC_URL:OUTSOURCING_DEPLOYER_KEY" ;;
+    *) return 1 ;;
+  esac
+}
 
-IFS=':' read -r SCRIPT_FILE CONTRACT_NAME RPC_ENV DEPLOYER_KEY_ENV <<< "${CHAIN_CONFIG[$CHAIN]}"
+CHAIN_ROW="$(chain_config "$CHAIN")" || error "unknown chain '$CHAIN'. Valid: $CHAIN_NAMES"
+
+IFS=':' read -r SCRIPT_FILE CONTRACT_NAME RPC_ENV DEPLOYER_KEY_ENV <<< "$CHAIN_ROW"
 FORGE_SCRIPT_PATH="script/exchange/$SCRIPT_FILE"
 DEPLOYMENTS_FILE="$DEPLOYMENTS_DIR/$CHAIN.json"
 
 # ── env / rpc validation ──────────────────────────────────────────────────────
 check_env() {
   local var="$1"
-  [[ -z "${!var:-}" ]] && error "env var $var is not set. Add it to your .env or export it."
+  # `if`, not `[[ ... ]] && error`. Under `set -e` the && form makes the function
+  # return the test's exit status, so a variable that IS set returns 1 and kills
+  # the script — silently, with no output on either stream. The effect was that
+  # a real deploy only got past this check when the env was MISSING, which is
+  # backwards, and reads as "the script does nothing and exits 1".
+  if [[ -z "${!var:-}" ]]; then
+    error "env var $var is not set. Add it to your .env or export it."
+  fi
 }
 
 if [[ "$DRY_RUN" == "false" ]]; then
@@ -128,11 +159,29 @@ save_deployment() {
 JSON
 }
 
-# ── forge output parser ───────────────────────────────────────────────────────
-# Extracts the last "Contract Address: 0x..." from forge script output
-parse_deployed_address() {
-  grep -oE 'Contract Address: 0x[0-9a-fA-F]{40}' | tail -1 | awk '{print $3}'
+# ── deployed-address lookup ───────────────────────────────────────────────────
+# Read the address from the BROADCAST ARTIFACT, by contract name.
+#
+# This used to grep forge's stdout. Two bugs, both silent and both expensive:
+# forge does not print "Contract Address:" for a scripted deploy, so the parse
+# always failed and killed the run right after a successful broadcast; and when
+# widened to match the `Name: 0x...` console.log lines it took the LAST match,
+# which is whatever the script logged last — recording MatchingLib's address as
+# the MatchingEngine. A wrong address here propagates into deployments.json and
+# then into every indexer and frontend that trusts it.
+#
+# broadcast/<Script>/<chainId>/run-latest.json is what forge itself wrote and is
+# keyed by contractName, so it cannot be confused by log ordering.
+deployed_address() {
+  local contract="$1" script_file="$2"
+  node -e '
+    const [file, name] = process.argv.slice(1);
+    const r = require(file);
+    const hit = r.transactions.filter(t => t.contractName === name && t.contractAddress).pop();
+    process.stdout.write(hit ? hit.contractAddress : "");
+  ' "$(pwd)/broadcast/${script_file}/${CHAIN_ID_FOR_BROADCAST:-11155931}/run-latest.json" "$contract" 2>/dev/null || true
 }
+
 
 # ── forge runner ─────────────────────────────────────────────────────────────
 run_forge() {
@@ -141,7 +190,11 @@ run_forge() {
 
   >&2 echo ""
   >&2 echo -e "${BOLD}━━━ $label ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
-  >&2 echo -e "${CYAN}CMD:${RESET} ${cmd[*]}"
+  # Redact the key. This line echoed `--private-key 0x<64 hex>` in full, so every
+  # deploy wrote a live credential into terminal scrollback, CI logs and any
+  # transcript capturing them — and a dry run, the thing you are told to do
+  # first, leaked it just as readily as a real deploy.
+  >&2 echo -e "${CYAN}CMD:${RESET} $(printf '%s ' "${cmd[@]}" | sed -E 's/(--private-key)[[:space:]]+[^[:space:]]+/\1 <redacted>/g')"
   >&2 echo ""
 
   if [[ "$DRY_RUN" == "true" ]]; then
@@ -152,7 +205,7 @@ run_forge() {
 
   local output
   output=$("${cmd[@]}" 2>&1 | tee /dev/stderr)
-  echo "$output" | parse_deployed_address
+  deployed_address "$1" "$SCRIPT_FILE"
 }
 
 # ── main workflow ─────────────────────────────────────────────────────────────

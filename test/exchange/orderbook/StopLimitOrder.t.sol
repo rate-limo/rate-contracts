@@ -48,13 +48,33 @@ contract StopLimitOrderTest is BaseSetup {
         // but the stop remains isolated until a taker first consumes the regular book.
         matchingEngine.setSpread(address(token1), address(token2), 20_000_000, 20_000_000, false);
         vm.prank(trader1);
-        matchingEngine.limitSell(address(token1), address(token2), 80e8, 1e18, true, 2, trader1);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 80e8,
+                amount: 1e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
 
         uint256 baseBefore = token1.balanceOf(trader2);
         vm.prank(trader2);
         // n=2 is shared across both venues: one regular-book match followed by
         // one stop-book match.
-        matchingEngine.limitBuy(address(token1), address(token2), 80e8, 160e18, false, 2, trader2);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 80e8,
+                amount: 160e18,
+                isMaker: false,
+                n: 2,
+                recipient: trader2
+            })
+        );
 
         assertEq(token1.balanceOf(trader2) - baseBefore, 1.998e18, "regular and stop asks both filled after fees");
         StopLimitOrderbook.StopOrder memory stopped = stopEngine.getOrder(
@@ -71,10 +91,30 @@ contract StopLimitOrderTest is BaseSetup {
 
         matchingEngine.setSpread(address(token1), address(token2), 20_000_000, 20_000_000, false);
         vm.prank(trader1);
-        matchingEngine.limitSell(address(token1), address(token2), 80e8, 1e18, true, 2, trader1);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 80e8,
+                amount: 1e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
 
         vm.prank(trader2);
-        matchingEngine.limitBuy(address(token1), address(token2), 80e8, 160e18, false, 1, trader2);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 80e8,
+                amount: 160e18,
+                isMaker: false,
+                n: 1,
+                recipient: trader2
+            })
+        );
 
         StopLimitOrderbook.StopOrder memory stopped = stopEngine.getOrder(
             address(token1), address(token2), false, stopId
@@ -90,7 +130,17 @@ contract StopLimitOrderTest is BaseSetup {
         );
 
         vm.prank(trader2);
-        matchingEngine.limitBuy(address(token1), address(token2), 100e8, 100e18, false, 2, trader2);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 100e8,
+                amount: 100e18,
+                isMaker: false,
+                n: 2,
+                recipient: trader2
+            })
+        );
 
         StopLimitOrderbook.StopOrder memory stopped = stopEngine.getOrder(
             address(token1), address(token2), false, stopId
@@ -107,12 +157,32 @@ contract StopLimitOrderTest is BaseSetup {
 
         matchingEngine.setSpread(address(token1), address(token2), 20_000_000, 20_000_000, false);
         vm.prank(trader1);
-        matchingEngine.limitBuy(address(token1), address(token2), 120e8, 120e18, true, 2, trader1);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 120e8,
+                amount: 120e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
 
         // This consumes the ordinary bid exactly. No matching budget or taker
         // remainder remains, so the crossed stop must stay dormant.
         vm.prank(trader2);
-        matchingEngine.limitSell(address(token1), address(token2), 120e8, 1e18, false, 3, trader2);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 120e8,
+                amount: 1e18,
+                isMaker: false,
+                n: 3,
+                recipient: trader2
+            })
+        );
 
         StopLimitOrderbook.StopOrder memory stopped = stopEngine.getOrder(
             address(token1), address(token2), true, stopId
@@ -192,20 +262,60 @@ contract StopLimitOrderTest is BaseSetup {
         // Two asks: trader2's triggering buy consumes the first; the newly crossed
         // stop-market buy consumes the second and refunds its unused quote.
         vm.startPrank(trader1);
-        matchingEngine.limitSell(address(token1), address(token2), 110e8, 1e18, true, 2, trader1);
-        matchingEngine.limitSell(address(token1), address(token2), 110e8, 1e18, true, 2, trader1);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 110e8,
+                amount: 1e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 110e8,
+                amount: 1e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
         vm.stopPrank();
 
         uint256 baseBefore = token1.balanceOf(trader1);
         uint256 quoteBefore = token2.balanceOf(trader1);
         vm.prank(trader2);
-        matchingEngine.limitBuy(address(token1), address(token2), 110e8, 110e18, false, 3, trader2);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 110e8,
+                amount: 110e18,
+                isMaker: false,
+                n: 3,
+                recipient: trader2
+            })
+        );
 
         // The exact regular fill above exhausts its own pass. A later order with
         // no regular resting bid provides the activation pass; the stop-market
         // buy then consumes the second ask.
         vm.prank(trader2);
-        matchingEngine.limitSell(address(token1), address(token2), 110e8, 1e18, false, 2, trader2);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 110e8,
+                amount: 1e18,
+                isMaker: false,
+                n: 2,
+                recipient: trader2
+            })
+        );
 
         assertEq(token1.balanceOf(trader1) - baseBefore, 0.999e18, "stop-market bought one ask after fee");
         // 220 quote is settlement for the two maker asks and 110 is the unused
@@ -241,7 +351,15 @@ contract StopLimitOrderTest is BaseSetup {
     function testRegularAndStopIdsAreSeparateNamespaces() public {
         vm.prank(trader1);
         matchingEngine.limitBuy(
-            address(token1), address(token2), 80e8, 100e18, true, 2, trader1
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 80e8,
+                amount: 100e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
         );
         vm.prank(trader1);
         uint32 stopId = stopEngine.placeStopLimit(
@@ -310,13 +428,43 @@ contract StopLimitOrderTest is BaseSetup {
 
         matchingEngine.setSpread(address(token1), address(token2), 20_000_000, 20_000_000, false);
         vm.prank(trader1);
-        matchingEngine.limitBuy(address(token1), address(token2), 120e8, 120e18, true, 2, trader1);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 120e8,
+                amount: 120e18,
+                isMaker: true,
+                n: 2,
+                recipient: trader1
+            })
+        );
         vm.prank(trader2);
-        matchingEngine.limitSell(address(token1), address(token2), 120e8, 1e18, false, 1, trader2);
+        matchingEngine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 120e8,
+                amount: 1e18,
+                isMaker: false,
+                n: 1,
+                recipient: trader2
+            })
+        );
 
         vm.recordLogs();
         vm.prank(trader2);
-        matchingEngine.limitBuy(address(token1), address(token2), 120e8, 120e18, false, 2, trader2);
+        matchingEngine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                price: 120e8,
+                amount: 120e18,
+                isMaker: false,
+                n: 2,
+                recipient: trader2
+            })
+        );
 
         Vm.Log[] memory logs = vm.getRecordedLogs();
         bytes32 activatedTopic = keccak256(

@@ -47,11 +47,31 @@ contract PoCOrderCancelFailed is BaseSetup {
         // trader1 rests an ask; trader2 takes it in full, so the order is gone.
         vm.prank(trader1);
         IMatchingEngine.OrderResult memory placed =
-            matchingEngine.limitSell(address(token1), address(token2), PRICE, 10e18, true, 2, trader1);
+            matchingEngine.limitSell(
+                IMatchingEngine.LimitOrderInput({
+                    base: address(token1),
+                    quote: address(token2),
+                    price: PRICE,
+                    amount: 10e18,
+                    isMaker: true,
+                    n: 2,
+                    recipient: trader1
+                })
+            );
         assertGt(placed.id, 0, "order rested");
 
         vm.prank(trader2);
-        matchingEngine.marketBuy(address(token1), address(token2), 5000e18, false, 5, trader2, 100000);
+        matchingEngine.marketBuy(
+            IMatchingEngine.MarketOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                amount: 5000e18,
+                isMaker: false,
+                n: 5,
+                recipient: trader2,
+                slippageLimit: 100000
+            })
+        );
 
         assertEq(
             matchingEngine.getOrder(address(token1), address(token2), false, placed.id).owner,
@@ -104,10 +124,30 @@ contract PoCOrderCancelFailed is BaseSetup {
 
         vm.prank(trader1);
         IMatchingEngine.OrderResult memory placed =
-            matchingEngine.limitSell(address(token1), address(token2), PRICE, 10e18, true, 2, trader1);
+            matchingEngine.limitSell(
+                IMatchingEngine.LimitOrderInput({
+                    base: address(token1),
+                    quote: address(token2),
+                    price: PRICE,
+                    amount: 10e18,
+                    isMaker: true,
+                    n: 2,
+                    recipient: trader1
+                })
+            );
 
         vm.prank(trader2);
-        matchingEngine.marketBuy(address(token1), address(token2), 5000e18, false, 5, trader2, 100000);
+        matchingEngine.marketBuy(
+            IMatchingEngine.MarketOrderInput({
+                base: address(token1),
+                quote: address(token2),
+                amount: 5000e18,
+                isMaker: false,
+                n: 5,
+                recipient: trader2,
+                slippageLimit: 100000
+            })
+        );
 
         IMatchingEngine.CancelOrderInput[] memory batch = new IMatchingEngine.CancelOrderInput[](1);
         batch[0] = IMatchingEngine.CancelOrderInput({
