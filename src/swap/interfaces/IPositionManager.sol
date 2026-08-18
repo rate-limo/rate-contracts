@@ -5,6 +5,11 @@ interface IPositionManager {
     error NotOwnerOrApproved(uint256 tokenId, address caller);
     error PositionNotEmpty(uint256 tokenId);
     error NotRouter(address caller);
+    /// @notice Thrown when a batch exceeds the per-call position limit.
+    /// @dev Out-of-gas carries zero return data, leaving a frontend nothing to decode
+    /// (see test/swap/PoC_EstimateGasOnly.t.sol). This turns that silence into a
+    /// decodable error, mirroring MatchingEngine's TooManyMatches.
+    error TooManyPositions(uint256 count);
 
     // Pool.addLiquidity/removeLiquidity/collect are all gated onlyPositionManager, so this
     // singleton's log stream covers EVERY liquidity change across every factory-deployed Pool --
@@ -81,6 +86,21 @@ interface IPositionManager {
     ) external;
 
     function collect(uint256 tokenId, address recipient) external returns (uint256 baseFee, uint256 quoteFee);
+
+    /// @notice Claims accrued fees for several positions the caller controls, in one call.
+    /// @dev Positions owing nothing -- retired, or live with a zero balance on both sides --
+    /// are skipped rather than reverting, because a position stays held as an ERC1155 id
+    /// after Pool retires it and "claim everything I hold" would otherwise fail on any
+    /// stale entry. An id the caller does not control still reverts the whole call.
+    /// Amounts are reported per id rather than summed: positions may span pools with
+    /// different token pairs, so a single total would add unrelated tokens together.
+    /// @param tokenIds Position token ids to claim. At most MAX_CLAIM_BATCH entries.
+    /// @param recipient Address paid every collected fee.
+    /// @return baseFees Base-side fee claimed for tokenIds[i]; zero where skipped.
+    /// @return quoteFees Quote-side fee claimed for tokenIds[i]; zero where skipped.
+    function collectBatch(uint256[] calldata tokenIds, address recipient)
+        external
+        returns (uint256[] memory baseFees, uint256[] memory quoteFees);
 
     function burn(uint256 tokenId) external;
 

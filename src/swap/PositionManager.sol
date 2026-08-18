@@ -20,6 +20,11 @@ contract PositionManager is IPositionManager, ERC1155Upgradeable, OwnableUpgrade
     // exactly amount=1, so "the holder" is unambiguous for as long as the id is live.
     mapping(uint256 => address) internal _holder;
     uint256 public nextTokenId;
+    // Bounds collectBatch's loop. The length is caller-chosen rather than attacker-grown,
+    // so this is ergonomic rather than a security boundary: without it an over-large batch
+    // dies out-of-gas, which returns zero bytes and leaves the UI nothing to explain.
+    // Validated by test_collectBatch_fullBatchFitsWalletGasBudget, not assumed.
+    uint256 private constant MAX_CLAIM_BATCH = 30;
     address public poolFactory;
     // The one SwapRouter (or other trusted forwarder) allowed to call *For functions on behalf
     // of a caller it reports itself -- see removeLiquidityFor. Unset (address(0)) by default, so
@@ -193,6 +198,36 @@ contract PositionManager is IPositionManager, ERC1155Upgradeable, OwnableUpgrade
     {
         TokenPosition memory tp = _tokenPositions[tokenId];
         return IPool(tp.pool).collect(tp.positionId, recipient);
+    }
+
+    /// @inheritdoc IPositionManager
+    function collectBatch(uint256[] calldata tokenIds, address recipient)
+        external
+        returns (uint256[] memory baseFees, uint256[] memory quoteFees)
+    {
+        uint256 len = tokenIds.length;
+        if (len > MAX_CLAIM_BATCH) revert TooManyPositions(len);
+
+        baseFees = new uint256[](len);
+        quoteFees = new uint256[](len);
+
+        for (uint256 i = 0; i < len; i++) {
+            uint256 tokenId = tokenIds[i];
+            // Checked per id rather than via the modifier so the revert names the offending
+            // id. This also gates the reads below: an unknown or burned id has no holder and
+            // no pool, so it fails here instead of reaching a codeless address.
+            if (!_isOwnerOrApproved(msg.sender, tokenId)) {
+                revert NotOwnerOrApproved(tokenId, msg.sender);
+            }
+
+            TokenPosition memory tp = _tokenPositions[tokenId];
+            IPool.Position memory p = IPool(tp.pool).getPosition(tp.positionId);
+            // Pool.collect reverts PositionDoesNotExist on a retired id, so read first and
+            // skip anything with nothing to claim -- see the interface note.
+            if (!p.active || (p.feeOwedBase == 0 && p.feeOwedQuote == 0)) continue;
+
+            (baseFees[i], quoteFees[i]) = IPool(tp.pool).collect(tp.positionId, recipient);
+        }
     }
 
     function burn(uint256 tokenId) external onlyOwnerOrApproved(tokenId) {
