@@ -9,9 +9,10 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 import {Coin} from "./AssetGenerator.sol";
 import {IMatchingEngine} from "../exchange/interfaces/IMatchingEngine.sol";
 import {ExchangeOrderbook} from "../exchange/libraries/ExchangeOrderbook.sol";
-import {IPositionManager} from "../swap/interfaces/IPositionManager.sol";
+import {BandPositionManager} from "../swap/BandPositionManager.sol";
+import {IBandPositionManager} from "../swap/interfaces/IBandPositionManager.sol";
 import {IPoolFactory} from "../swap/interfaces/IPoolFactory.sol";
-import {IPool} from "../swap/interfaces/IPool.sol";
+import {BandPool} from "../swap/BandPool.sol";
 import {TransferHelper} from "../exchange/libraries/TransferHelper.sol";
 
 interface IAssetGeneratorPolicy {
@@ -312,12 +313,28 @@ contract PresaleLaunch is AccessControl, ReentrancyGuard, ERC1155Holder {
         GraduationConfig memory config = graduationConfigs[presaleId];
         if (config.listingPrice == 0) revert InvalidGraduationConfig();
 
+        // The coin exists from `createPresale` on and `addPair` is permissionless, so a
+        // third party can list it first. Graduating would then revert forever and, with no
+        // other exit from Successful, lock every contribution. Adopting that pair is not
+        // an option either: its lister chose the price and owns the pool's bands. So the
+        // sale FAILS instead -- contributors claim full refunds and the creator recovers
+        // the tokens, through the paths a failed sale already has.
+        if (IMatchingEngine(matchingEngine).getPair(sale.coin, sale.quote) != address(0)) {
+            sale.status = Status.Failed;
+            emit PresaleFinalized(presaleId, Status.Failed, sale.totalCommitted, 0);
+            return;
+        }
+
         uint256 lpQuoteAmount = sale.acceptedRaise * sale.lpBps / BPS;
         uint256 lpTokenAmount = sale.lpTokenAllocation;
         address pair = _createPair(sale, config);
         address pool = _poolFor(sale.coin, sale.quote);
         uint256 positionTokenId = _addLiquidity(sale, config, pool, lpTokenAmount, lpQuoteAmount);
         _setTradingPolicy(sale.coin, sale.quote, config);
+        // addPair made THIS contract the pool's creator -- the engine names its caller. The
+        // sale's creator is the pair creator, and nothing here ever configures bands, so
+        // hand the ladder over now or it can never be configured by anyone.
+        BandPool(pool).transferCreator(sale.creator);
 
         uint64 unlockAt = uint64(block.timestamp) + config.liquidityLockDuration;
         sale.pair = pair;
@@ -442,13 +459,34 @@ contract PresaleLaunch is AccessControl, ReentrancyGuard, ERC1155Holder {
         uint256 tokenAmount,
         uint256 quoteAmount
     ) internal returns (uint256 tokenId) {
-        TransferHelper.safeApprove(sale.coin, pool, tokenAmount);
-        TransferHelper.safeApprove(sale.quote, pool, quoteAmount);
-        tokenId = IPositionManager(positionManager).addLiquidity(
-            pool, config.minPrice, config.maxPrice, config.lpSlippageLimit, tokenAmount, quoteAmount
+        // Band 0, the tightest: a graduating presale has a price it just discovered and
+        // wants the fills, and band 0 is where the volume is. The token can take the rest
+        // of the ladder later through `increaseLiquidity` -- one token holds every band,
+        // so that never multiplies the liquidity lock below.
+        //
+        // config.minPrice / maxPrice / lpSlippageLimit have no equivalent here: a band
+        // position stores no range, and the tolerance belongs to the band.
+        TransferHelper.safeApprove(sale.coin, positionManager, tokenAmount);
+        TransferHelper.safeApprove(sale.quote, positionManager, quoteAmount);
+        uint8[] memory bands = new uint8[](1);
+        uint256[] memory baseAmounts = new uint256[](1);
+        uint256[] memory quoteAmounts = new uint256[](1);
+        uint128[] memory minShares = new uint128[](1);
+        baseAmounts[0] = tokenAmount;
+        quoteAmounts[0] = quoteAmount;
+        (tokenId,) = BandPositionManager(positionManager).mint(
+            IBandPositionManager.MintParams({
+                pool: pool,
+                bands: bands,
+                baseAmounts: baseAmounts,
+                quoteAmounts: quoteAmounts,
+                minShares: minShares,
+                recipient: address(this),
+                deadline: block.timestamp
+            })
         );
-        TransferHelper.safeApprove(sale.coin, pool, 0);
-        TransferHelper.safeApprove(sale.quote, pool, 0);
+        TransferHelper.safeApprove(sale.coin, positionManager, 0);
+        TransferHelper.safeApprove(sale.quote, positionManager, 0);
     }
 
     function _setTradingPolicy(address coin, address quote, GraduationConfig memory config) internal {

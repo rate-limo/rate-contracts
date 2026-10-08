@@ -26,13 +26,36 @@ import {IPoolFactory} from "../../src/swap/interfaces/IPoolFactory.sol";
 /// Optional:
 ///   TEST_LAUNCH_NAME / TEST_LAUNCH_SYMBOL / TEST_LAUNCH_SUPPLY
 ///   TEST_AUCTION_NAME / TEST_AUCTION_SYMBOL
-///   TEST_TRADE_BASE_AMOUNT / TEST_TRADE_QUOTE_AMOUNT
+///   TEST_TRADES_PER_PAIR (default 10, alternating buy and sell)
+///   TEST_TRADE_BASE_AMOUNT / TEST_TRADE_QUOTE_AMOUNT (size of one sell / one buy)
+///   TEST_BOOK_ASK_BASE_AMOUNT / TEST_BOOK_BID_QUOTE_AMOUNT (depth to rest)
 ///   AUCTION_BIDDER_KEY and AUCTION_COMMIT_AMOUNT (creates one visible bid)
 ///
 /// Example:
 ///   ALLOW_TEST_FIXTURES=true TEST_FIXTURE_CHAIN_ID=11155931 \
 ///   forge script script/launch/SeedTestLaunches.s.sol:SeedTestLaunches \
 ///     --rpc-url $RISE_RPC_URL --broadcast --private-key $RISE_TESTNET_DEPLOYER_KEY
+/// A launch hands the creator only what they buy, so the fixture buys the most it may
+/// -- 10% of supply, a tenth of the starting market cap -- to have coins to trade. The
+/// other 80% rests as the launch ladder: the fixture's buys fill it from step 0 up.
+function _launchWithDevBuy(
+    address generator,
+    string memory name,
+    string memory symbol,
+    uint256 supply,
+    address quote
+) returns (address coin) {
+    uint256 devBuy = AssetGenerator(generator).quoteOption(quote).startingMarketCap / 10;
+    IERC20(quote).approve(generator, devBuy);
+    coin = AssetGenerator(generator).launch{value: AssetGenerator(generator).launchFee()}(
+        name, symbol, supply, quote, devBuy, AssetGenerator.LockMode.FeesOnly
+    );
+    // A two-transaction launch (Tempo): the ladder is its own call, and the fixture's
+    // buys below have nothing to fill until it is placed.
+    if (AssetGenerator(generator).ladderDeferred()) AssetGenerator(generator).placeLadder(coin);
+}
+
+
 contract SeedTestLaunches is Script {
     struct FixtureConfig {
         uint256 deployerKey;
@@ -45,6 +68,9 @@ contract SeedTestLaunches is Script {
         string auctionName;
         string auctionSymbol;
     }
+    /// @dev `MatchingEngine.DENOM`. Every spread numerator is scaled to 1e8.
+    uint256 internal constant SPREAD_DENOM = 100_000_000;
+
     // Production chains currently supported by the exchange deployment scripts.
     uint256 internal constant ETHEREUM = 1;
     uint256 internal constant OPTIMISM = 10;
@@ -77,8 +103,8 @@ contract SeedTestLaunches is Script {
 
         vm.startBroadcast(config.deployerKey);
         address launchedCoin = _createDegenLaunch(config.generator, config.launchName, config.launchSymbol, config.launchSupply, config.quote);
-        (address pool, uint256 tradePrice, uint256 tradedBase, uint256 tradedQuote) =
-            _seedPoolAndTrade(config.generator, launchedCoin, config.quote, vm.addr(config.deployerKey));
+        (address pool, TradeReport memory report) =
+            _seedPoolAndTrades(config.generator, launchedCoin, config.quote, vm.addr(config.deployerKey));
         (uint256 presaleId, address auctionCoin) = _createAuction(config.presale, config.auctionName, config.auctionSymbol, config.quote, vm.addr(config.deployerKey));
         vm.stopBroadcast();
 
@@ -93,14 +119,18 @@ contract SeedTestLaunches is Script {
         console.log("TEST_FIXTURE_CHAIN_ID=%s", block.chainid);
         console.log("DEGEN_LAUNCH_COIN=%s", launchedCoin);
         console.log("DEGEN_POOL=%s", pool);
-        console.log("DEGEN_TRADE_PRICE=%s", tradePrice);
-        console.log("DEGEN_TRADED_BASE=%s", tradedBase);
-        console.log("DEGEN_TRADED_QUOTE=%s", tradedQuote);
+        console.log("DEGEN_TRADE_PRICE=%s", report.price);
+        console.log("DEGEN_TRADED_BASE=%s", report.sellBase);
+        console.log("DEGEN_TRADED_QUOTE=%s", report.buyQuote);
+        console.log("DEGEN_TRADES_BUY=%s", report.buys);
+        console.log("DEGEN_TRADES_SELL=%s", report.sells);
         console.log("WHITE_AUCTION_PRESALE_ID=%s", presaleId);
         console.log("WHITE_AUCTION_COIN=%s", auctionCoin);
         console.log("WHITE_AUCTION_CONTRACT=%s", config.presale);
         console.log("quote=%s", config.quote);
-        console.log("note: the launch created its Pool automatically and the fixture executed one matched trade");
+        console.log(
+            "note: the launch created its Pool automatically and the fixture traded the pair on both sides"
+        );
     }
 
     function _createDegenLaunch(
@@ -110,109 +140,196 @@ contract SeedTestLaunches is Script {
         uint256 supply,
         address quote
     ) internal returns (address coin) {
-        coin = AssetGenerator(generator).launch(name, symbol, supply, quote);
+        coin = _launchWithDevBuy(generator, name, symbol, supply, quote);
+    }
+
+    /// @dev What one seeded market ended up with, so `run` can report it without
+    /// six return values threaded through the helpers below.
+    struct TradeReport {
+        uint256 price;
+        uint256 buyQuote;
+        uint256 sellBase;
+        uint256 buys;
+        uint256 sells;
+    }
+
+    /// @dev Everything one market's round of trading needs, bundled because the loop
+    /// passes it through four helpers and hits "stack too deep" without it.
+    struct TradeConfig {
+        IMatchingEngine engine;
+        address pair;
+        address coin;
+        address quote;
+        address recipient;
+        uint256 askBase;
+        uint256 bidQuote;
+        uint256 buyQuote;
+        uint256 sellBase;
+        uint256 trades;
     }
 
     /// @dev AssetGenerator lists the pair through MatchingEngine, which creates the Pool
-    /// in the same transaction. Execute one matched trade, then leave a bid and ask
-    /// away from the market so the indexer/UI has both trade history and visible depth.
-    function _seedPoolAndTrade(address generator, address coin, address quote, address recipient)
+    /// in the same transaction. This then trades the pair BOTH WAYS, ten times by default.
+    ///
+    /// It used to execute exactly one matched trade — a maker sell crossed by a market
+    /// buy — and then re-rest depth. That is enough to prove the engine settles and not
+    /// enough to populate anything that reads a MARKET rather than a trade: a candle
+    /// needs opens and closes to have a shape, a tape needs rows to scroll, and every
+    /// surface that splits volume by direction needs a direction that is not always the
+    /// same one. Worse, every `OrderMatched` the fixture emitted carried `isBid = false`,
+    /// so the venue rendered a coin that had only ever been bought and never sold.
+    ///
+    /// Depth is re-checked before every trade rather than rested once. Each fill drags
+    /// `lmp` to the price it happened at, so the side that is not being hit drifts away
+    /// from the market price and eventually out of the band a taker is allowed to price
+    /// into — and `_limitBuy`/`_limitSell` CLAMP an out-of-band price instead of
+    /// reverting, so the order executes, reaches nothing, and refunds itself.
+    function _seedPoolAndTrades(address generator, address coin, address quote, address recipient)
         internal
-        returns (address pool, uint256 price, uint256 tradedBase, uint256 tradedQuote)
+        returns (address pool, TradeReport memory report)
     {
-        IMatchingEngine engine = IMatchingEngine(AssetGenerator(generator).matchingEngine());
-        address pair = engine.getPair(coin, quote);
-        price = IOrderbook(pair).lmp();
-        pool = IPoolFactory(engine.poolFactory()).getPool(coin, quote);
+        TradeConfig memory cfg;
+        cfg.engine = IMatchingEngine(AssetGenerator(generator).matchingEngine());
+        cfg.pair = cfg.engine.getPair(coin, quote);
+        cfg.coin = coin;
+        cfg.quote = quote;
+        cfg.recipient = recipient;
+        pool = IPoolFactory(cfg.engine.poolFactory()).getPool(coin, quote);
         require(pool != address(0), "seed: pool not created");
 
-        tradedBase = vm.envOr("TEST_TRADE_BASE_AMOUNT", uint256(1 ether));
         uint256 quoteUnit = 10 ** IERC20Metadata(quote).decimals();
-        tradedQuote = vm.envOr("TEST_TRADE_QUOTE_AMOUNT", quoteUnit);
-        require(tradedBase > 0 && tradedQuote > 0, "seed: trade amount is zero");
-        require(IERC20(coin).balanceOf(recipient) >= tradedBase, "seed: insufficient launch coin");
-        require(IERC20(quote).balanceOf(recipient) >= tradedQuote, "seed: insufficient quote");
-
-        IERC20(coin).approve(address(engine), tradedBase);
-        IERC20(quote).approve(address(engine), tradedQuote);
-        engine.limitSell(
-            IMatchingEngine.LimitOrderInput({
-                base: coin,
-                quote: quote,
-                price: price,
-                amount: tradedBase,
-                isMaker: true,
-                n: 1,
-                recipient: recipient
-            })
+        cfg.trades = vm.envOr("TEST_TRADES_PER_PAIR", uint256(10));
+        cfg.sellBase = vm.envOr("TEST_TRADE_BASE_AMOUNT", uint256(1 ether));
+        cfg.buyQuote = vm.envOr("TEST_TRADE_QUOTE_AMOUNT", quoteUnit);
+        // Depth sized for the whole round, not for one trade: a book re-rested mid-round
+        // still works, it just costs a transaction and moves the price further.
+        cfg.askBase = vm.envOr("TEST_BOOK_ASK_BASE_AMOUNT", cfg.sellBase * cfg.trades * 2);
+        cfg.bidQuote = vm.envOr("TEST_BOOK_BID_QUOTE_AMOUNT", cfg.buyQuote * cfg.trades);
+        require(cfg.trades > 0, "seed: trade count is zero");
+        require(cfg.sellBase > 0 && cfg.buyQuote > 0, "seed: trade amount is zero");
+        require(
+            IERC20(coin).balanceOf(recipient) >= cfg.askBase + cfg.sellBase * cfg.trades,
+            "seed: insufficient launch coin"
         );
-        IMatchingEngine.OrderResult memory buy =
-            engine.marketBuy(
-                IMatchingEngine.MarketOrderInput({
-                    base: coin,
-                    quote: quote,
-                    amount: tradedQuote,
-                    isMaker: false,
-                    n: 1,
-                    recipient: recipient,
-                    slippageLimit: 1_000_000
-                })
-            );
-        require(buy.placed == 0, "seed: market buy left a resting order");
+        // The bid is the only quote that leaves for long: this wallet owns both sides of
+        // the book, so a taker buy pays quote to its own resting ask and a taker sell is
+        // paid back out of its own resting bid.
+        require(IERC20(quote).balanceOf(recipient) >= cfg.bidQuote + cfg.buyQuote, "seed: insufficient quote");
 
-        DepthConfig memory depth = DepthConfig({
-            coin: coin,
-            quote: quote,
-            recipient: recipient,
-            askAmount: vm.envOr("TEST_BOOK_ASK_BASE_AMOUNT", tradedBase),
-            bidAmount: vm.envOr("TEST_BOOK_BID_QUOTE_AMOUNT", tradedQuote),
-            price: IOrderbook(pair).lmp()
-        });
-        _seedRestingDepth(engine, depth);
+        // Approved once rather than before every order. The alternative is ~20 extra
+        // broadcast transactions for a fixture wallet holding testnet funds.
+        IERC20(coin).approve(address(cfg.engine), type(uint256).max);
+        IERC20(quote).approve(address(cfg.engine), type(uint256).max);
+
+        (report.buys, report.sells) = _tradeRound(cfg);
+        report.price = IOrderbook(cfg.pair).lmp();
+        report.buyQuote = cfg.buyQuote;
+        report.sellBase = cfg.sellBase;
+        require(report.buys > 0 && report.sells > 0, "seed: the pair did not trade both ways");
     }
 
-    struct DepthConfig { address coin; address quote; address recipient; uint256 askAmount; uint256 bidAmount; uint256 price; }
+    function _tradeRound(TradeConfig memory cfg) internal returns (uint256 buys, uint256 sells) {
+        for (uint256 i = 0; i < cfg.trades; ++i) {
+            if (i % 2 == 0) {
+                _ensureAsk(cfg);
+                if (_takerBuy(cfg)) ++buys;
+            } else {
+                _ensureBid(cfg);
+                if (_takerSell(cfg)) ++sells;
+            }
+        }
+    }
 
-    function _seedRestingDepth(IMatchingEngine engine, DepthConfig memory depth) internal {
-        // The crossed fixture intentionally consumes its ask. Re-seed depth after
-        // it settles, otherwise the book is empty even though a Trade exists.
-        require(depth.price > 0, "seed: post-trade price is zero");
-        uint256 askPrice = depth.price + (depth.price / 20);
-        uint256 bidPrice = depth.price - (depth.price / 20);
-        require(bidPrice > 0, "seed: invalid depth prices");
-        require(IERC20(depth.coin).balanceOf(depth.recipient) >= depth.askAmount, "seed: insufficient ask balance");
-        require(IERC20(depth.quote).balanceOf(depth.recipient) >= depth.bidAmount, "seed: insufficient bid balance");
+    /// @dev Rest an ask when the book has none a taker buy could reach. Present is not
+    /// the same as reachable — see `_seedPoolAndTrades`.
+    function _ensureAsk(TradeConfig memory cfg) internal {
+        uint256 lmp = IOrderbook(cfg.pair).lmp();
+        require(lmp > 0, "seed: market price is zero");
+        uint256 ceiling = (lmp * (SPREAD_DENOM + cfg.engine.getSpread(cfg.pair, true, false))) / SPREAD_DENOM;
+        (, uint256 askHead) = cfg.engine.heads(cfg.coin, cfg.quote);
+        if (askHead != 0 && askHead <= ceiling) return;
 
-        IERC20(depth.coin).approve(address(engine), depth.askAmount);
-        IERC20(depth.quote).approve(address(engine), depth.bidAmount);
-        IMatchingEngine.OrderResult memory ask = engine.limitSell(
+        // AT the market price, never through it: a maker order priced across the spread
+        // executes against itself as a taker.
+        cfg.engine.limitSell(
             IMatchingEngine.LimitOrderInput({
-                base: depth.coin,
-                quote: depth.quote,
-                price: askPrice,
-                amount: depth.askAmount,
+                base: cfg.coin,
+                quote: cfg.quote,
+                price: lmp,
+                amount: cfg.askBase,
                 isMaker: true,
                 n: 1,
-                recipient: depth.recipient
+                recipient: cfg.recipient
             })
         );
-        IMatchingEngine.OrderResult memory bid = engine.limitBuy(
+    }
+
+    /// @dev Rest a bid, a quarter of the allowed band under the market price.
+    ///
+    /// Not at the edge of the band: each fill drags `lmp` with it, so a quarter leaves
+    /// room for several fills on one side before the other becomes unreachable. Strictly
+    /// under the ask, because this wallet owns the ask — a crossing bid would wash-trade
+    /// against its own depth and eat what every buy in the round needs.
+    function _ensureBid(TradeConfig memory cfg) internal {
+        uint256 lmp = IOrderbook(cfg.pair).lmp();
+        require(lmp > 0, "seed: market price is zero");
+        uint256 spread = cfg.engine.getSpread(cfg.pair, false, false);
+        (uint256 bidHead, uint256 askHead) = cfg.engine.heads(cfg.coin, cfg.quote);
+        if (bidHead != 0 && bidHead >= (lmp * (SPREAD_DENOM - spread)) / SPREAD_DENOM) return;
+
+        uint256 price = lmp - (lmp * spread) / (SPREAD_DENOM * 4);
+        require(price > 0 && (askHead == 0 || price < askHead), "seed: no room for a bid under the ask");
+        cfg.engine.limitBuy(
             IMatchingEngine.LimitOrderInput({
-                base: depth.coin,
-                quote: depth.quote,
-                price: bidPrice,
-                amount: depth.bidAmount,
+                base: cfg.coin,
+                quote: cfg.quote,
+                price: price,
+                amount: cfg.bidQuote,
                 isMaker: true,
                 n: 1,
-                recipient: depth.recipient
+                recipient: cfg.recipient
             })
         );
-        require(ask.placed > 0 && bid.placed > 0, "seed: depth orders did not rest");
+    }
 
-        console.log("DEGEN_BOOK_BID_PRICE=%s", bidPrice);
-        console.log("DEGEN_BOOK_ASK_PRICE=%s", askPrice);
-        console.log("DEGEN_BOOK_BID_QUOTE=%s", depth.bidAmount);
-        console.log("DEGEN_BOOK_ASK_BASE=%s", depth.askAmount);
+    /// @dev A taker buy priced AT the resting ask, which is the price guaranteed to cross
+    /// it. Reports whether it actually filled by the base it received: an order that
+    /// matched nothing is refunded rather than reverted, so `OrderResult` cannot say.
+    function _takerBuy(TradeConfig memory cfg) internal returns (bool filled) {
+        (, uint256 askHead) = cfg.engine.heads(cfg.coin, cfg.quote);
+        if (askHead == 0) return false;
+        uint256 held = IERC20(cfg.coin).balanceOf(cfg.recipient);
+        cfg.engine.limitBuy(
+            IMatchingEngine.LimitOrderInput({
+                base: cfg.coin,
+                quote: cfg.quote,
+                price: askHead,
+                amount: cfg.buyQuote,
+                isMaker: false,
+                n: 20,
+                recipient: cfg.recipient
+            })
+        );
+        return IERC20(cfg.coin).balanceOf(cfg.recipient) > held;
+    }
+
+    /// @dev The mirror of `_takerBuy`, and the trade the fixture never made.
+    function _takerSell(TradeConfig memory cfg) internal returns (bool filled) {
+        (uint256 bidHead,) = cfg.engine.heads(cfg.coin, cfg.quote);
+        if (bidHead == 0) return false;
+        uint256 held = IERC20(cfg.quote).balanceOf(cfg.recipient);
+        cfg.engine.limitSell(
+            IMatchingEngine.LimitOrderInput({
+                base: cfg.coin,
+                quote: cfg.quote,
+                price: bidHead,
+                amount: cfg.sellBase,
+                isMaker: false,
+                n: 20,
+                recipient: cfg.recipient
+            })
+        );
+        return IERC20(cfg.quote).balanceOf(cfg.recipient) > held;
     }
 
     function _createAuction(
@@ -223,6 +340,7 @@ contract SeedTestLaunches is Script {
         address treasury
     ) internal returns (uint256 presaleId, address coin) {
         uint256 quoteUnit = 10 ** IERC20Metadata(quote).decimals();
+        uint64 auctionStartDelay = uint64(vm.envOr("TEST_AUCTION_START_DELAY", uint256(600)));
         PresaleLaunch.CreateParams memory params = PresaleLaunch.CreateParams({
             name: name,
             symbol: symbol,
@@ -235,11 +353,26 @@ contract SeedTestLaunches is Script {
             maxPerWallet: 1_000 * quoteUnit,
             creatorTokenAllocation: 20_000_000 ether,
             treasuryTokenAllocation: 68_000_000 ether,
-            // Leave mining headroom: createPresale rejects a start timestamp even one
-            // second behind the transaction's block. The auction becomes live shortly
-            // after this fixture is broadcast.
-            startAt: uint64(block.timestamp + 30 seconds),
-            endAt: uint64(block.timestamp + 3 days),
+            /*
+             * Leave mining headroom: `_validateCreate` rejects a start timestamp even
+             * one second behind the block that mines it.
+             *
+             * This was `+ 30 seconds` and that is not enough. `block.timestamp` is read
+             * once, from the block the script forked at, while the run ahead of this
+             * call launches a coin and puts ten trades through the pair — so by the time
+             * `createPresale` is validated the chain has moved on. Measured on RISE
+             * 2026-09-24: `startAt` landed 42 seconds BEHIND the head and the whole seed
+             * died on `InvalidSchedule()`, which reads as a bad fixture rather than a
+             * clock that ran out.
+             *
+             * Ten minutes is headroom the script cannot plausibly outrun, and the cost
+             * is only that the auction is UPCOMING for that long before it opens — which
+             * is itself a state worth having a fixture for. `endAt` hangs off `startAt`
+             * rather than off `block.timestamp`, so widening the delay cannot quietly
+             * shorten the sale.
+             */
+            startAt: uint64(block.timestamp + auctionStartDelay),
+            endAt: uint64(block.timestamp + auctionStartDelay + 3 days),
             creatorCliff: 90 days,
             creatorVestingDuration: 365 days,
             lpBps: 2_000,
@@ -286,8 +419,8 @@ contract PrepareAllLaunchStates is Script {
         address deployer = vm.addr(key);
 
         vm.startBroadcast(key);
-        address launchA = AssetGenerator(generator).launch("Iter New Pool", "NEWPOOL", 1_000_000_000 ether, quote);
-        address launchB = AssetGenerator(generator).launch("Iter Active Pool", "ACTIVE", 1_000_000_000 ether, quote);
+        address launchA = _launchWithDevBuy(generator, "Iter New Pool", "NEWPOOL", 1_000_000_000 ether, quote);
+        address launchB = _launchWithDevBuy(generator, "Iter Active Pool", "ACTIVE", 1_000_000_000 ether, quote);
 
         (uint256 upcomingId,) = _create(presale, quote, "Upcoming Auction", "UPCOMING", uint64(block.timestamp + 1 days), uint64(block.timestamp + 4 days), deployer);
         (uint256 liveId,) = _create(presale, quote, "Live Auction", "LIVE", activationAt, activationAt + 3 days, deployer);
