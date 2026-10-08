@@ -227,9 +227,12 @@ contract PoCDustEatsMatchBudgetTest is BaseSetup {
         super.setUp();
         _setUpPair(ExchangeOrderbook.MatchingMode.PriceTimePriority);
 
-        // One leftover, created first so FIFO keeps it at the head.
+        // One leftover, created first so FIFO would keep it at the head. Since
+        // 2026-10-04 the fill that leaves it evicts it (MatchingLib._evictIfDust), so
+        // it never reaches the next taker at all; the lazy eviction this test was
+        // written for remains, and the budget assertion below still holds.
         _leaveDustOrder(trader1, trader2);
-        assertEq(_resting(), 1, "one dust order resting");
+        assertEq(_resting(), 0, "the fill that left the dust evicted it");
 
         // A real, fillable order queued behind it.
         uint256 realDeposit = 3_000_000;

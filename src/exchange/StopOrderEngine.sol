@@ -192,7 +192,7 @@ contract StopOrderEngine is ReentrancyGuard, IStopOrderEngine {
         StopOrderMatchingLib.MatchState memory state = StopOrderMatchingLib.MatchState(
             stopOrderbooks[request.pair], request.amount, request.bidHead, request.askHead,
             request.used, main.maxMatches(), main.getSpread(request.pair, true, true),
-            main.getSpread(request.pair, false, true)
+            main.getSpread(request.pair, false, true), matchingEngine
         );
         (remaining, bidHead, askHead) = StopOrderMatchingLib.matchRemainder(input, state);
         if (remaining != 0) TransferHelper.safeTransfer(request.give, matchingEngine, remaining);

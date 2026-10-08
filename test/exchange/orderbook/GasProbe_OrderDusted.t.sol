@@ -37,10 +37,14 @@ contract GasProbeOrderDustedTest is BaseSetup {
             })
         );
 
+        // Since 2026-10-04 the eviction happens in THIS fill, the one that leaves the
+        // 2,600 remainder (MatchingLib._evictIfDust), so this is the transaction to
+        // measure; the sweep after it finds nothing left to evict.
         uint256 firstFill = 5.8e12;
         base18.mint(trader2, firstFill);
         vm.prank(trader2); base18.approve(address(matchingEngine), firstFill);
         vm.prank(trader2);
+        uint256 gFill = gasleft();
         matchingEngine.limitSell(
             IMatchingEngine.LimitOrderInput({
                 base: address(base18),
@@ -52,6 +56,7 @@ contract GasProbeOrderDustedTest is BaseSetup {
                 recipient: trader2
             })
         );
+        console.log("partial fill that evicts its dust, gas:", gFill - gasleft());
 
         uint256 sell = 1e15;
         base18.mint(attacker, sell);
@@ -71,7 +76,7 @@ contract GasProbeOrderDustedTest is BaseSetup {
             })
         );
         uint256 used = g0 - gasleft();
-        console.log("eviction sweep gas:", used);
+        console.log("sweep after it (nothing to evict) gas:", used);
     }
 
     /** The common path for comparison: an ordinary partial fill, no eviction. */
@@ -101,7 +106,10 @@ contract GasProbeOrderDustedTest is BaseSetup {
             })
         );
 
-        uint256 fill = 5.8e12;
+        // 5e12 leaves 5,000 raw quote, which still converts to base: a partial fill
+        // with nothing to evict. (5.8e12 would leave dust, which is now evicted in
+        // the same fill and would no longer be the ordinary path.)
+        uint256 fill = 5e12;
         base18.mint(trader2, fill);
         vm.prank(trader2); base18.approve(address(matchingEngine), fill);
 

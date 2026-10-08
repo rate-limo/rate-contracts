@@ -10,8 +10,10 @@ import {ExchangeOrderbook} from "../../src/exchange/libraries/ExchangeOrderbook.
 import {IOrderbook} from "../../src/exchange/interfaces/IOrderbook.sol";
 import {StopOrderEngine} from "../../src/exchange/StopOrderEngine.sol";
 import {IPoolFactory} from "../../src/swap/interfaces/IPoolFactory.sol";
-import {IPositionManager} from "../../src/swap/interfaces/IPositionManager.sol";
-import {ISwapRouter} from "../../src/swap/interfaces/ISwapRouter.sol";
+import {BandPositionManager} from "../../src/swap/BandPositionManager.sol";
+import {IBandPositionManager} from "../../src/swap/interfaces/IBandPositionManager.sol";
+import {BandSwapRouter} from "../../src/swap/BandSwapRouter.sol";
+import {BandPool} from "../../src/swap/BandPool.sol";
 
 /**
  * Opens a pair on a freshly deployed engine and drives real order flow through it, so
@@ -24,7 +26,7 @@ import {ISwapRouter} from "../../src/swap/interfaces/ISwapRouter.sol";
  *
  * Emits, in order: PairAdded, then OrderPlaced for each resting order, then
  * OrderMatched + NewMarketPrice for the crossing buy, then (after the order stages)
- * LiquidityAdded from a direct PositionManager deposit, StopOrderPlaced from a resting
+ * IncreaseLiquidity from a BandPositionManager mint, StopOrderPlaced from a resting
  * stop-limit, and OrderCanceled. SwapExecuted + HopExecuted + SwapPriceReport from a
  * router swap are ALSO emitted, but only when the pair already has >=10 minutes of
  * oracle history -- never true for a pair this same run just listed, so on a normal run
@@ -52,8 +54,8 @@ contract SeedNewExchange is Script {
     /// comment is not a guard.
     MatchingEngine ENGINE;
     IPoolFactory POOL_FACTORY;
-    IPositionManager POSITION_MANAGER;
-    ISwapRouter SWAP_ROUTER;
+    BandPositionManager POSITION_MANAGER;
+    BandSwapRouter SWAP_ROUTER;
     StopOrderEngine STOP_ORDER_ENGINE;
 
     /// Price is 1e8-scaled venue-wide, independent of either token's decimals:
@@ -81,8 +83,8 @@ contract SeedNewExchange is Script {
 
         ENGINE = MatchingEngine(payable(_at(registry, base, "matchingEngine")));
         POOL_FACTORY = IPoolFactory(_at(registry, base, "poolFactory"));
-        POSITION_MANAGER = IPositionManager(_at(registry, base, "positionManager"));
-        SWAP_ROUTER = ISwapRouter(_at(registry, base, "swapRouter"));
+        POSITION_MANAGER = BandPositionManager(_at(registry, base, "positionManager"));
+        SWAP_ROUTER = BandSwapRouter(_at(registry, base, "swapRouter"));
         STOP_ORDER_ENGINE = StopOrderEngine(_at(registry, base, "stopOrderEngine"));
 
         console.log("engine (registry)     %s", address(ENGINE));
@@ -192,12 +194,12 @@ contract SeedNewExchange is Script {
         console.log("  OrderPlaced        - each resting createOrder call");
         console.log("  OrderMatched       - the crossing bid + the market buy");
         console.log("  NewMarketPrice     - every match that moves lmp");
-        console.log("  LiquidityAdded     - PositionManager.addLiquidity");
+        console.log("  IncreaseLiquidity  - BandPositionManager.mint");
         console.log("  StopOrderPlaced    - StopOrderEngine.placeStopLimit");
         console.log("  OrderCanceled      - cancelling the 90e8 resting bid");
         if (swapRan) {
-            console.log("  SwapExecuted       - SwapRouter.swap, route summary");
-            console.log("  HopExecuted        - SwapRouter.swap, per-hop detail");
+            console.log("  SwapExecuted       - BandSwapRouter.swap, route summary");
+            console.log("  HopExecuted        - BandSwapRouter.swap, per-hop detail");
             console.log("  SwapPriceReport    - MatchingEngine.reportSwap via the router");
             console.log("  (RemainderHandled  - only if the swap left a hop remainder)");
         } else {
@@ -243,44 +245,42 @@ contract SeedNewExchange is Script {
     }
 
     /// addPair already created the pool, so this looks it up instead of creating a
-    /// second one. The range straddles LISTING_PRICE so it is two-sided and in range
-    /// for `_swap` below, rather than sitting idle on one side.
-    ///
-    /// Pool.addLiquidity pulls tokens via `payer` (this script's EOA, forwarded through
-    /// PositionManager as msg.sender) with the Pool contract itself as the ERC-20
-    /// spender -- not PositionManager -- so the approvals below target the pool,
-    /// mirroring how SwapRouter approves the pool rather than itself in Pool.sol's own
-    /// transferFrom calls. Split out (like `_order`) purely to keep `run`'s stack frame
-    /// within EVM limits -- this file has no viaIR compilation available.
+    /// second one, and mints ONE token holding band 0 -- a seed wants the fills. The
+    /// allowance belongs to the manager: it pulls the deposit, then pays the pool.
+    /// Split out (like `_order`) to keep `run`'s frame inside the legacy stack limit.
     function _addLiquidity(MockToken base, MockToken quote) internal returns (address pool) {
         pool = POOL_FACTORY.getPool(address(base), address(quote));
-        uint256 lpBaseAmount = 1_000e18;
-        uint256 lpQuoteAmount = 100_000e6;
-        base.approve(pool, lpBaseAmount);
-        quote.approve(pool, lpQuoteAmount);
-        POSITION_MANAGER.addLiquidity(pool, 80e8, 120e8, 5_000_000, lpBaseAmount, lpQuoteAmount);
+        uint8[] memory bands = new uint8[](1);
+        uint256[] memory baseAmounts = new uint256[](1);
+        uint256[] memory quoteAmounts = new uint256[](1);
+        uint128[] memory minShares = new uint128[](1);
+        baseAmounts[0] = 1_000e18;
+        quoteAmounts[0] = 100_000e6;
+        base.approve(address(POSITION_MANAGER), baseAmounts[0]);
+        quote.approve(address(POSITION_MANAGER), quoteAmounts[0]);
+        POSITION_MANAGER.mint(
+            IBandPositionManager.MintParams({
+                pool: pool,
+                bands: bands,
+                baseAmounts: baseAmounts,
+                quoteAmounts: quoteAmounts,
+                minShares: minShares,
+                recipient: msg.sender,
+                deadline: block.timestamp + 600
+            })
+        );
     }
 
     /// SwapPriceReport is emitted from MatchingLib through a delegatecall and carries
     /// `address indexed pair`, so this is the stage that proves the rail extraction kept
     /// both the emitting address and the topic layout intact.
     function _swap(MockToken base, MockToken quote, address me) internal {
-        address[] memory path = new address[](2);
-        path[0] = address(base);
-        path[1] = address(quote);
         uint256 swapAmountIn = 20e18;
         base.approve(address(SWAP_ROUTER), swapAmountIn);
-        SWAP_ROUTER.swap(
-            ISwapRouter.SwapInput({
-                path: path,
-                amountIn: swapAmountIn,
-                minAmountOut: 0,
-                // minAmountOut: 0 for a seed, there is nothing to protect against yet
-                recipient: me,
-                remainderMode: ISwapRouter.RemainderMode.Refund,
-                remainderConfig: ISwapRouter.RemainderConfig({restPrice: 0, lpMinPrice: 0, lpMaxPrice: 0, lpSlippageLimit: 0})
-            })
-        );
+        // One pool, one hop. The band router takes a pool address rather than a path:
+        // routing across books is the engine's job, not the pool's.
+        address pool = POOL_FACTORY.getPool(address(base), address(quote));
+        SWAP_ROUTER.swap(pool, swapAmountIn, false, me, 0);
     }
 
     /// A buy stop placed above the market so `_validate`'s StopAlreadyCrossed check

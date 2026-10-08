@@ -90,6 +90,11 @@ contract LimitOrderTest is BaseSetup {
         updateOrderData[0].base = address(token1);
         updateOrderData[0].quote = address(btc);
         updateOrderData[0].isBid = true;
+        // Re-placed as a resting limit order. Left unset, isLimit defaulted to a MARKET order,
+        // which now reverts InsufficientLiquidity on a book with no asks (QuoteNotPrice.t.sol);
+        // this test is about shrinking the amount, so it pins the limit path like the one below.
+        updateOrderData[0].isLimit = true;
+        updateOrderData[0].isMaker = true;
         updateOrderData[0].orderId = ord0Result.id;
         updateOrderData[0].price = 1e8;
         updateOrderData[0].amount = 1e5;

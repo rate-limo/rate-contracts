@@ -20,8 +20,13 @@ import {stdStorage, StdStorage, Test} from "forge-std/Test.sol";
 contract LoopOutOfGasTest is BaseSetup {
     // Fixed: _insert bid traversal previously used (price < last) instead of (price < next),
     // causing infinite loops when inserting a price that required deeper traversal.
-    // With lmp=2 and spread=2%, the cap up=2*1.02=2 collapses all bids >= 2 to price=2;
-    // only the bid at price=1 (below cap) creates a second distinct price level.
+    // With lmp=2 and spread=2%, the buy rail is 2*1.02 = 2.04 rounded UP to 3 -- a nonzero
+    // spread always admits at least one tick (see LowPriceSpread.t.sol). A resting order is
+    // a quote, not a trade, so it no longer lifts lmp (QuoteNotPrice.t.sol): both bids at 5
+    // rest at 3 against the unchanged lmp of 2 and share a level, and the bid at 1 must then
+    // traverse past 3 and 2 to land at the tail -- the deeper insert this test guards.
+    // (Before rounding up, 2.04 floored to 2 and both bids at 5 collapsed onto 2; while
+    // resting orders printed, the first lifted lmp to 3 and the second rested at 4.)
     function testExchangeLinkedListOutOfGas() public {
         super.setUp();
         matchingEngine.addPair(address(token1), address(token2), 2, 0, address(token1), ExchangeOrderbook.MatchingMode.PriceTimePriority);
@@ -80,10 +85,11 @@ contract LoopOutOfGasTest is BaseSetup {
         );
 
         uint256[] memory prices = book.getPrices(true, 10);
-        // With lmp=2: bids at 5 are spread-capped to 2 (same price), bid at 1 is below cap.
-        assertEq(prices[0], 2, "bid head should be 2 (spread cap collapses 5->2)");
-        assertEq(prices[1], 1, "second bid should be 1");
-        assertEq(prices[2], 0, "no third bid price");
+        // Both bids at 5 are capped one tick above the unchanged lmp of 2.
+        assertEq(prices[0], 3, "bid head should be 3 (both bids at 5 capped one tick above lmp 2)");
+        assertEq(prices[1], 2, "the bid at 2");
+        assertEq(prices[2], 1, "the bid at 1");
+        assertEq(prices[3], 0, "no fourth bid price");
     }
 
     // Fixed: _insert ask traversal previously used (while price > last && last != 0),

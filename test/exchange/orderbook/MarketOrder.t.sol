@@ -17,6 +17,7 @@ import {WETH9} from "../../../src/mock/WETH9.sol";
 import {BaseSetup} from "../OrderbookBaseSetup.sol";
 import {console} from "forge-std/console.sol";
 import {stdStorage, StdStorage, Test} from "forge-std/Test.sol";
+import {OrderPlacementLib} from "../../../src/exchange/libraries/OrderPlacementLib.sol";
 import {IMatchingEngine} from "../../../src/exchange/interfaces/IMatchingEngine.sol";
 
 contract MarketOrderTest is BaseSetup {
@@ -849,70 +850,55 @@ contract MarketOrderTest is BaseSetup {
     }
 
     // Check if market sell leading to zero price is fixed
+    // A market order into a book the setup has matched out, with no pool behind it, used to
+    // succeed having spent nothing -- and these tests only logged that it did not drag the
+    // price to zero (sell) or up (buy). It now reverts InsufficientLiquidity
+    // (QuoteNotPrice.t.sol), which is the stronger form of the same guarantee: nothing trades,
+    // so the price cannot move at all.
     function testMarketSellSettingPriceToZero() public {
-        (MockBase base, MockQuote quote, Orderbook book, uint256 _mp, uint256 _up, uint256 _down) =
-            _setupVolatilityTest();
-
-        // get pair and price info
+        (MockBase base, MockQuote quote, Orderbook book,,,) = _setupVolatilityTest();
         book = Orderbook(payable(matchingEngine.getPair(address(base), address(quote))));
-        (uint256 _bidHead, uint256 _askHead) = book.heads();
-        uint256 beforeB = quote.balanceOf(address(trader1));
-        IMatchingEngine.OrderResult memory orderResult = matchingEngine // silence warning
-            .marketSell(
-                IMatchingEngine.MarketOrderInput({
-                    base: address(base),
-                    quote: address(quote),
-                    amount: 1e8,
-                    isMaker: false,
-                    n: 5,
-                    recipient: trader1,
-                    slippageLimit: 2000000
-                })
-            );
-        uint256 afterB = quote.balanceOf(address(trader1));
-        // check make price is equal to computed result
-        console.log("make price: ", orderResult.makePrice);
-        console.log("market price: ", book.mktPrice());
-        console.log("balance before: ", beforeB);
-        console.log("balance after: ", afterB);
+        uint256 priceBefore = book.mktPrice();
+        uint256 balanceBefore = quote.balanceOf(address(trader1));
+
+        vm.expectRevert(OrderPlacementLib.InsufficientLiquidity.selector);
+        matchingEngine.marketSell(
+            IMatchingEngine.MarketOrderInput({
+                base: address(base),
+                quote: address(quote),
+                amount: 1e8,
+                isMaker: false,
+                n: 5,
+                recipient: trader1,
+                slippageLimit: 2000000
+            })
+        );
+
+        assertEq(book.mktPrice(), priceBefore, "an unfilled market sell must not move the price");
+        assertEq(quote.balanceOf(address(trader1)), balanceBefore, "and must not move funds");
     }
 
-    // Check if market buy leading to price change is fixed
     function testMarketBuySettingPriceToUp() public {
-        (
-            MockBase base,
-            MockQuote quote,
-            Orderbook book,
-            uint256 _mp, // silence warning
-            uint256 _up, // silence warning
-            uint256 _down // silence warning
-        ) = _setupVolatilityTest();
-        console.log("market buy price test begins: ", _mp);
-        // get pair and price info
-        Orderbook bookBefore = Orderbook(payable(matchingEngine.getPair(address(base), address(quote))));
-        (uint256 _bidHead, uint256 _askHead) = bookBefore.heads(); // silence warning
-        uint256 beforeB = quote.balanceOf(address(trader1));
-        IMatchingEngine.OrderResult memory orderResult = matchingEngine // silence warning
-            .marketBuy(
-                IMatchingEngine.MarketOrderInput({
-                    base: address(base),
-                    quote: address(quote),
-                    amount: 1e8,
-                    isMaker: false,
-                    n: 5,
-                    recipient: trader1,
-                    slippageLimit: 2000000
-                })
-            );
-        Orderbook bookAfter = Orderbook(payable(matchingEngine.getPair(address(base), address(quote))));
-        uint256 afterB = quote.balanceOf(address(trader1));
-        // check make price is equal to computed result
-        console.log("make price: ", orderResult.makePrice);
-        console.log("placed amount: ", orderResult.placed);
-        console.log("order id: ", orderResult.id);
-        console.log("market price before trade: ", bookBefore.mktPrice());
-        console.log("balance before: ", beforeB);
-        console.log("balance after: ", afterB);
+        (MockBase base, MockQuote quote, Orderbook book,,,) = _setupVolatilityTest();
+        book = Orderbook(payable(matchingEngine.getPair(address(base), address(quote))));
+        uint256 priceBefore = book.mktPrice();
+        uint256 balanceBefore = quote.balanceOf(address(trader1));
+
+        vm.expectRevert(OrderPlacementLib.InsufficientLiquidity.selector);
+        matchingEngine.marketBuy(
+            IMatchingEngine.MarketOrderInput({
+                base: address(base),
+                quote: address(quote),
+                amount: 1e8,
+                isMaker: false,
+                n: 5,
+                recipient: trader1,
+                slippageLimit: 2000000
+            })
+        );
+
+        assertEq(book.mktPrice(), priceBefore, "an unfilled market buy must not move the price");
+        assertEq(quote.balanceOf(address(trader1)), balanceBefore, "and must not move funds");
     }
 
     function testMarketSellVolatilityDown4() public {

@@ -13,6 +13,11 @@ import {Oracle, ORACLE_CARDINALITY} from "../libraries/Oracle.sol";
 interface IWETHMinimal {
     function WETH() external view returns (address);
 
+    /// Nonzero when WETH() is the native coin's own ERC-20, which must NOT be unwrapped
+    /// (it has no withdraw()). See MatchingEngine.nativeScale. An Orderbook carrying this
+    /// call must be deployed together with an engine that answers it.
+    function nativeScale() external view returns (uint256);
+
     function transfer(address to, uint256 value) external returns (bool);
 
     function withdraw(uint256) external;
@@ -443,6 +448,11 @@ contract Orderbook is IOrderbook, Initializable {
         bool isMaker
     ) internal returns (uint256 feeAmount) {
         address weth = IWETHMinimal(pair.engine).WETH();
+        // "is the native token" and "must be unwrapped" are different questions, and only
+        // on a real wrapper are they the same answer. Where the native coin IS the ERC-20,
+        // withdraw() reverts -- so this keeps settlement on the ordinary safeTransfer
+        // path, which moves the identical funds.
+        bool unwrap = IWETHMinimal(pair.engine).nativeScale() == 0;
         if (applyFee) {
             uint32 fee = IMatchingEngine(pair.engine).feeOf(
                 pair.base,
@@ -460,25 +470,41 @@ contract Orderbook is IOrderbook, Initializable {
             }
             uint256 feeToShare = feeAmount - poolShare;
 
-            if (token == weth) {
-                IWETHMinimal(weth).withdraw(amount);
-                if (feeToShare > 0) payable(feeTo).transfer(feeToShare);
-                if (poolShare > 0) payable(pool).transfer(poolShare);
-                payable(to).transfer(withoutFee);
-            } else {
-                if (feeToShare > 0) TransferHelper.safeTransfer(token, feeTo, feeToShare);
-                if (poolShare > 0) TransferHelper.safeTransfer(token, pool, poolShare);
-                TransferHelper.safeTransfer(token, to, withoutFee);
-            }
+            _pay(token, weth, unwrap, feeTo, feeToShare);
+            _pay(token, weth, unwrap, pool, poolShare);
+            _pay(token, weth, unwrap, to, withoutFee);
             return feeAmount;
         } else {
-            if (token == weth) {
-                IWETHMinimal(weth).withdraw(amount);
-                payable(to).transfer(amount);
-            } else {
-                TransferHelper.safeTransfer(token, to, amount);
-            }
+            _pay(token, weth, unwrap, to, amount);
             return 0;
+        }
+    }
+
+    /// One payout. Four call sites said this in two shapes; one shape is the same
+    /// behaviour and ~200 bytes of a contract whose FACTORY embeds its creation code with
+    /// about 21 bytes of EIP-170 headroom.
+    ///
+    /// `unwrap` false means WETH() is the native coin's own ERC-20 (see
+    /// MatchingEngine.nativeScale): there is no withdraw() to call and an ordinary
+    /// transfer already moves the native funds.
+    ///
+    /// The fee path used to unwrap ONCE for the whole amount and then make up to three
+    /// native transfers; it now unwraps per payout. Same funds, same recipients, slightly
+    /// more gas on a real wrapper -- and unreachable on a native-ERC20 chain, which never
+    /// unwraps at all.
+    function _pay(
+        address token,
+        address weth,
+        bool unwrap,
+        address to,
+        uint256 amount
+    ) private {
+        if (amount == 0) return;
+        if (token == weth && unwrap) {
+            IWETHMinimal(weth).withdraw(amount);
+            payable(to).transfer(amount);
+        } else {
+            TransferHelper.safeTransfer(token, to, amount);
         }
     }
 

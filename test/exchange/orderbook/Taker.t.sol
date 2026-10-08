@@ -16,6 +16,7 @@ import {WETH9} from "../../../src/mock/WETH9.sol";
 import {BaseSetup} from "../OrderbookBaseSetup.sol";
 import {console} from "forge-std/console.sol";
 import {stdStorage, StdStorage, Test} from "forge-std/Test.sol";
+import {OrderPlacementLib} from "../../../src/exchange/libraries/OrderPlacementLib.sol";
 import {IMatchingEngine} from "../../../src/exchange/interfaces/IMatchingEngine.sol";
 
 contract MarketOrderTest is BaseSetup {
@@ -61,10 +62,14 @@ contract MarketOrderTest is BaseSetup {
         return (base, quote, book, mp, up, down);
     }
 
+    // A taker market order with nothing to match and no pool behind it used to succeed and
+    // refund in full; this test checked the refund kept the trader whole. It now reverts
+    // InsufficientLiquidity (QuoteNotPrice.t.sol) -- the trader is kept whole by never
+    // spending at all.
     function testMarketSellTaker() public {
-        (MockBase base, MockQuote quote, Orderbook _book, uint256 _mp, uint256 _up, uint256 _down) =
-            _setupVolatilityTest();
+        (MockBase base, MockQuote quote,,,,) = _setupVolatilityTest();
         uint256 beforeB = base.balanceOf(trader1);
+        vm.expectRevert(OrderPlacementLib.InsufficientLiquidity.selector);
         matchingEngine.marketSell(
             IMatchingEngine.MarketOrderInput({
                 base: address(base),
@@ -76,16 +81,13 @@ contract MarketOrderTest is BaseSetup {
                 slippageLimit: 200
             })
         );
-        uint256 afterB = base.balanceOf(trader1);
-        console.log("before balance: ", beforeB);
-        console.log("after balance: ", afterB);
-        assert(afterB > beforeB - 1e18);
+        assertEq(base.balanceOf(trader1), beforeB, "an unfilled taker order must not move funds");
     }
 
     function testMarketBuyTaker() public {
-        (MockBase base, MockQuote quote, Orderbook _book, uint256 _mp, uint256 _up, uint256 _down) =
-            _setupVolatilityTest();
-        uint256 beforeB = base.balanceOf(trader1);
+        (MockBase base, MockQuote quote,,,,) = _setupVolatilityTest();
+        uint256 beforeB = quote.balanceOf(trader1);
+        vm.expectRevert(OrderPlacementLib.InsufficientLiquidity.selector);
         matchingEngine.marketBuy(
             IMatchingEngine.MarketOrderInput({
                 base: address(base),
@@ -97,10 +99,7 @@ contract MarketOrderTest is BaseSetup {
                 slippageLimit: 200
             })
         );
-        uint256 afterB = base.balanceOf(trader1);
-        console.log("before balance: ", beforeB);
-        console.log("after balance: ", afterB);
-        assert(afterB > beforeB - 1e18);
+        assertEq(quote.balanceOf(trader1), beforeB, "an unfilled taker order must not move funds");
     }
 
     function testLimitBuyTaker() public {

@@ -148,6 +148,10 @@ interface IMatchingEngine {
         uint32 i;
         uint32 n;
         uint16 orderHistoryId;
+        /// Revert with `InsufficientGasToMatch` rather than halt when the gas guard fires
+        /// before this order has matched anything. Set only on the trader's own order;
+        /// the stop-order passes run inside someone else's transaction and keep halting.
+        bool strict;
     }
 
     struct LimitOrderState {

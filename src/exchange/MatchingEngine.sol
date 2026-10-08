@@ -5,6 +5,7 @@ pragma solidity ^0.8.24;
 import {IOrderbookFactory} from "./interfaces/IOrderbookFactory.sol";
 import {IOrderbook, ExchangeOrderbook} from "./interfaces/IOrderbook.sol";
 import {TransferHelper} from "./libraries/TransferHelper.sol";
+import {OrderPlacementLib} from "./libraries/OrderPlacementLib.sol";
 import {IWETH} from "./interfaces/IWETH.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
@@ -100,6 +101,31 @@ contract MatchingEngine is ReentrancyGuard, AccessControl, IMatchingEngine {
     // Listing Info setting
     mapping(address => uint256) public listingDates;
 
+    /// Native wei per one {WETH} token unit, and ZERO when {WETH} is a real wrapper.
+    ///
+    /// Nonzero means "WETH is the native coin's OWN ERC-20, not a wrapper around it".
+    /// Arc is the case: its gas coin is USDC and USDC is already an ERC-20 at
+    /// 0x3600…0000, so there is nothing to wrap -- and nothing that COULD wrap, because
+    /// that contract implements no deposit()/withdraw() and both revert. Leaving this at
+    /// zero on such a chain does not degrade, it reverts every native-in order and every
+    /// settlement of that token.
+    ///
+    /// The two interfaces do NOT agree on decimals, which is why this is a scale and not
+    /// a flag: Arc's native view is 18 decimals and its ERC-20 view is 6 -- one ledger at
+    /// two precisions -- so `scale` is 1e12 there. Measured on chain, an account holding
+    /// 19267166024000000000 wei reports 19267166 from balanceOf, discarding 24 nano-USDC
+    /// that is real balance and simply not nameable at 6 decimals. So conversion is only
+    /// ever done in the EXACT direction: from a token amount to its native cost
+    /// (`amount * nativeScale`). Dividing native by the scale truncates, and must never
+    /// decide what a user is owed.
+    ///
+    /// ONE slot carrying both facts is deliberate. A separate `bool nativeIsERC20`
+    /// alongside it cost a second public getter and put this contract 345 bytes over
+    /// EIP-170, which it has ~166 bytes of headroom against.
+    ///
+    /// Zero by default, so every chain deployed before this behaves exactly as it did.
+    uint256 public nativeScale;
+
     event OrderCanceled(
         address pair,
         uint256 id,
@@ -161,6 +187,27 @@ contract MatchingEngine is ReentrancyGuard, AccessControl, IMatchingEngine {
         uint256 refunded
     );
 
+    /// @notice Declared here as well as in PoolFallbackLib, for the reason above —
+    /// and this one was MISSING, which is worth stating rather than quietly fixing.
+    ///
+    /// `PoolFallbackLib` is an `internal` library, so the log carries the engine's
+    /// address like every other event here. It was declared only in the library, so
+    /// it was absent from this ABI and nothing watching this address could decode
+    /// it: every time a taker's remainder routed into the pool, the one event that
+    /// names WHAT WAS ROUTED was invisible to the indexer, the broker and the app.
+    /// The trade still settled and `reportSwap` still moved the price, so the
+    /// absence looked like nothing at all.
+    ///
+    /// Adding a declaration changes no behaviour and no selector; it only puts the
+    /// fragment in the ABI. Same fix already applied to OrderMatched, NewMarketPrice
+    /// and OrderDusted, and the third time this exact trap has been paid for.
+    event RemainderRoutedToPool(
+        address indexed pair,
+        address indexed recipient,
+        uint256 spent,
+        uint256 received
+    );
+
     event OrderPlaced(
         address pair,
         uint16 orderHistoryId,
@@ -214,6 +261,16 @@ contract MatchingEngine is ReentrancyGuard, AccessControl, IMatchingEngine {
     event PairCreate2(address deployer, bytes bytecode);
 
     error TooManyMatches(uint256 n);
+    /// Declared here as well as in MatchingLib so it lands in this contract's ABI: the
+    /// library reverts it under delegatecall, and an error absent from the engine's ABI
+    /// decodes as an unknown revert in every client. Costs no bytecode.
+    error InsufficientGasToMatch();
+    /// Same reason, for `OrderPlacementLib`: a MARKET order reverts with this when the
+    /// book has nothing reachable within the spread and the pool has nothing to fill
+    /// from. It is the single most likely revert on a coin nobody has made a market in
+    /// yet, and until it was declared here every client showed it as a raw hex blob.
+    /// A LIMIT order in the same state does not revert -- it rests, which is correct.
+    error InsufficientLiquidity();
     error OrderSizeTooSmall(uint256 amount, uint256 minRequired);
     error InvalidRole(bytes32 role, address sender);
     error InvalidPair(address base, address quote, address pair);
@@ -280,6 +337,10 @@ contract MatchingEngine is ReentrancyGuard, AccessControl, IMatchingEngine {
 
     function setStopOrderEngine(address stopOrderEngine_) external onlyRole(DEFAULT_ADMIN_ROLE) {
         stopOrderEngine = stopOrderEngine_;
+    }
+
+    function setNativeScale(uint256 scale) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        nativeScale = scale;
     }
 
     function getStopOrderEngine() external view returns (address) {
@@ -486,7 +547,15 @@ contract MatchingEngine is ReentrancyGuard, AccessControl, IMatchingEngine {
         }
 
         _setSpread(pair, buy, sell, isMkt);
+        // The pool's bands are fractions of the MARKET limit, so only that change moves them.
+        if (isMkt) _syncPool(base, quote);
         return true;
+    }
+
+    /// Push the pair's limit into its band pool, in the same transaction. The factory
+    /// does the lookup: this contract has no bytes to spare for it.
+    function _syncPool(address base, address quote) private {
+        if (poolFactory != address(0)) IPoolFactory(poolFactory).syncLimit(base, quote);
     }
 
     // user functions
@@ -538,7 +607,7 @@ contract MatchingEngine is ReentrancyGuard, AccessControl, IMatchingEngine {
             quote,
             recipient,
             true,
-            (orderData.lmp * (DENOM + orderData.spreadLimit)) / DENOM,
+            _capUp(type(uint256).max, orderData.lmp, orderData.spreadLimit),
             n,
             orderHistoryId
         );
@@ -552,24 +621,21 @@ contract MatchingEngine is ReentrancyGuard, AccessControl, IMatchingEngine {
         );
 
         // add make order on market price, reuse orderData.ls for storing placed Order id
-        orderData.makeId = _detMake(
-            base,
-            quote,
+        orderData.makeId = OrderPlacementLib.detMake(
             orderData.pair,
+            quote,
             orderData.withoutFee,
             orderData.bidHead,
             true,
-            isMaker,
-            recipient
+            // the book took none of it, so the pool is this order's last venue
+            (isMaker ? OrderPlacementLib.MAKER : 0)
+                | (orderData.withoutFee == quoteAmount ? OrderPlacementLib.REQUIRE_FILL : 0),
+            recipient,
+            orderDeadlineContext
         );
 
         // check if order id is made
         if (orderData.makeId > 0) {
-            //if made, set last market price to orderData.bidHead only if orderData.bidHead is greater than lmp
-            if (orderData.bidHead > orderData.lmp) {
-                IOrderbook(orderData.pair).setLmp(orderData.bidHead);
-                emit NewMarketPrice(orderData.pair, orderData.bidHead, true);
-            }
             emit OrderPlaced(
                 orderData.pair,
                 orderHistoryId,
@@ -684,24 +750,21 @@ contract MatchingEngine is ReentrancyGuard, AccessControl, IMatchingEngine {
             orderData.spreadLimit
         );
 
-        orderData.makeId = _detMake(
-            base,
-            quote,
+        orderData.makeId = OrderPlacementLib.detMake(
             orderData.pair,
+            base,
             orderData.withoutFee,
             orderData.askHead,
             false,
-            isMaker,
-            recipient
+            // the book took none of it, so the pool is this order's last venue
+            (isMaker ? OrderPlacementLib.MAKER : 0)
+                | (orderData.withoutFee == baseAmount ? OrderPlacementLib.REQUIRE_FILL : 0),
+            recipient,
+            orderDeadlineContext
         );
 
         // check if order id is made
         if (orderData.makeId > 0) {
-            //if made, set last market price to orderData.askHead only if askHead is smaller than lmp
-            if (orderData.askHead < orderData.lmp) {
-                IOrderbook(orderData.pair).setLmp(orderData.askHead);
-                emit NewMarketPrice(orderData.pair, orderData.askHead, false);
-            }
             emit OrderPlaced(
                 orderData.pair,
                 orderHistoryId,
@@ -801,9 +864,7 @@ contract MatchingEngine is ReentrancyGuard, AccessControl, IMatchingEngine {
             quote,
             recipient,
             true,
-            price >= (orderData.lmp * (DENOM + orderData.spreadLimit)) / DENOM
-                ? (orderData.lmp * (DENOM + orderData.spreadLimit)) / DENOM
-                : price,
+            _capUp(price, orderData.lmp, orderData.spreadLimit),
             n,
             orderHistoryId
         );
@@ -817,25 +878,20 @@ contract MatchingEngine is ReentrancyGuard, AccessControl, IMatchingEngine {
             orderData.spreadLimit
         );
 
-        orderData.makeId = _detMake(
-            base,
-            quote,
+        orderData.makeId = OrderPlacementLib.detMake(
             orderData.pair,
+            quote,
             orderData.withoutFee,
             price,
             true,
-            isMaker,
-            recipient
+            // a limit order names its own price and may legitimately cross nothing
+            isMaker ? OrderPlacementLib.MAKER : 0,
+            recipient,
+            orderDeadlineContext
         );
 
         // check if order id is made
         if (orderData.makeId > 0) {
-            // if made, set last market price to price only if price is higher than lmp
-            if (price > orderData.lmp) {
-                IOrderbook(orderData.pair).setLmp(price);
-
-                emit NewMarketPrice(orderData.pair, price, true);
-            }
             emit OrderPlaced(
                 orderData.pair,
                 orderHistoryId,
@@ -884,6 +940,17 @@ contract MatchingEngine is ReentrancyGuard, AccessControl, IMatchingEngine {
         );
     }
 
+
+    /// `min(price, lmp × (1 + spread))`, the product rounded UP. Flooring it, as this did,
+    /// erased the spread on low prices: at lmp = 500 (0.000005 on the 1e8 grid) a 0.1%
+    /// spread floors back to 500, so a market buy could never match an ask one tick above
+    /// the last price -- one tick there is 0.2%. Rounding up guarantees a nonzero spread
+    /// admits at least one tick, and is exact (no change) whenever the product is whole.
+    /// The sell side needs no twin: `lmp × (1 - spread)` floored already moves down.
+    function _capUp(uint256 price, uint256 lmp, uint32 spread) private pure returns (uint256) {
+        uint256 up = (lmp * (DENOM + spread) + DENOM - 1) / DENOM;
+        return price >= up ? up : price;
+    }
 
     function _detLimitBuyMakePrice(
         address orderbook,
@@ -948,24 +1015,19 @@ contract MatchingEngine is ReentrancyGuard, AccessControl, IMatchingEngine {
             orderData.spreadLimit
         );
 
-        orderData.makeId = _detMake(
-            base,
-            quote,
+        orderData.makeId = OrderPlacementLib.detMake(
             orderData.pair,
+            base,
             orderData.withoutFee,
             price,
             false,
-            isMaker,
-            recipient
+            // a limit order names its own price and may legitimately cross nothing
+            isMaker ? OrderPlacementLib.MAKER : 0,
+            recipient,
+            orderDeadlineContext
         );
 
         if (orderData.makeId > 0) {
-            // if made, set last market price to price only if price is lower than lmp
-            if (price < orderData.lmp) {
-                IOrderbook(orderData.pair).setLmp(price);
-
-                emit NewMarketPrice(orderData.pair, price, false);
-            }
             emit OrderPlaced(
                 orderData.pair,
                 orderHistoryId,
@@ -1071,13 +1133,18 @@ contract MatchingEngine is ReentrancyGuard, AccessControl, IMatchingEngine {
         // completely unaffected -- WETH pairs have always worked fine through
         // limitBuy/limitSell/marketBuy/etc., this guard only prevents Pool.swap/SwapRouter
         // from being used against a pair where their accounting would silently misbehave.
-        if (poolFactory != address(0) && base != WETH && quote != WETH) {
-            address pool = IPoolFactory(poolFactory).createPool(base, quote, pair);
+        if (
+            poolFactory != address(0) &&
+            (nativeScale != 0 || (base != WETH && quote != WETH))
+        ) {
+            // The lister becomes the pool's creator: this contract records no pair creator.
+            address pool = IPoolFactory(poolFactory).createPool(base, quote, pair, _msgSender());
             IOrderbook(pair).setPool(pool);
         }
         // set buy/sell spread to default suspension rate in basis point(bps)
         _setSpread(pair, dfltMktBuy, dfltMktSell, true);
         _setSpread(pair, dfltLmtBuy, dfltLmtSEll, false);
+        _syncPool(base, quote);
 
         _setListingDate(pair, listingDate);
 
@@ -1178,12 +1245,26 @@ contract MatchingEngine is ReentrancyGuard, AccessControl, IMatchingEngine {
         orderDeadlineContext = createOrderData.deadline;
         count = _nextHistoryId();
         leftover = nativeValue;
-        if (createOrderData.isBid) {
-            if (createOrderData.quote == WETH) {
-                // Convert ETH to WETH for internal call
+        // The leg being SPENT -- quote on a bid, base on an ask. Both branches below used
+        // to carry an identical copy of this block; one copy is the same behaviour and
+        // ~100 bytes of a contract that has none to spare.
+        //
+        // nativeScale != 0 means WETH is the native coin's OWN ERC-20 (Arc), so there is
+        // nothing to wrap: msg.value already moved this contract's balance of it. Only the
+        // bookkeeping differs -- `amount` is token units, `leftover` is native wei, which
+        // the 1:1 wrapper case let us conflate and this cannot.
+        address spend = createOrderData.isBid
+            ? createOrderData.quote
+            : createOrderData.base;
+        if (spend == WETH) {
+            if (nativeScale != 0) {
+                leftover -= createOrderData.amount * nativeScale;
+            } else {
                 IWETH(WETH).deposit{value: createOrderData.amount}();
                 leftover -= createOrderData.amount;
             }
+        }
+        if (createOrderData.isBid) {
             if (createOrderData.isLimit) {
                 result = _limitBuy(
                     createOrderData.base,
@@ -1214,11 +1295,6 @@ contract MatchingEngine is ReentrancyGuard, AccessControl, IMatchingEngine {
                 );
             }
         } else {
-            if (createOrderData.base == WETH) {
-                // Convert ETH to WETH for internal call
-                IWETH(WETH).deposit{value: createOrderData.amount}();
-                leftover -= createOrderData.amount;
-            }
             if (createOrderData.isLimit) {
                 result = _limitSell(
                     createOrderData.base,
@@ -1573,54 +1649,6 @@ contract MatchingEngine is ReentrancyGuard, AccessControl, IMatchingEngine {
         }
     }
 
-    /**
-     * @dev Internal function which makes an order on the orderbook.
-     * @param pair The address of the orderbook contract for the trading pair
-     * @param withoutFee The remaining amount of the asset after the market order has been executed
-     * @param price The price, base/quote regardless of decimals of the assets in the pair represented with 8 decimals (if 1000, base is 1000x quote)
-     * @param isBid Boolean indicating if the order is a buy (false) or a sell (true)
-     * @param recipient The address of the recipient to receive traded asset and claim ownership of made order
-     */
-    function _makeOrder(
-        address pair,
-        uint256 withoutFee,
-        uint256 price,
-        bool isBid,
-        address recipient
-    ) internal returns (uint32 id) {
-        bool foundDmt;
-        // create order
-        if (isBid) {
-            (id, foundDmt) = IOrderbook(pair).placeBid(
-                recipient,
-                price,
-                withoutFee,
-                orderDeadlineContext
-            );
-        } else {
-            (id, foundDmt) = IOrderbook(pair).placeAsk(
-                recipient,
-                price,
-                withoutFee,
-                orderDeadlineContext
-            );
-        }
-        if (foundDmt) {
-            // emit canceling dormant order
-            ExchangeOrderbook.Order memory order = IOrderbook(pair).removeDmt(
-                isBid
-            );
-            emit OrderCanceled(
-                pair,
-                id,
-                isBid,
-                order.owner,
-                order.depositAmount
-            );
-        }
-        return id;
-    }
-
     function _checkDeadline(uint64 deadline) private view {
         if (deadline != 0 && block.timestamp > deadline) {
             revert DeadlineExpired(deadline, block.timestamp);
@@ -1652,57 +1680,10 @@ contract MatchingEngine is ReentrancyGuard, AccessControl, IMatchingEngine {
         MatchingLib.LimitOrderInput memory input = MatchingLib.LimitOrderInput(
             pair, amount, give, recipient, isBid, limitPrice, n, orderHistoryId
         );
-        (remaining, bidHead, askHead, used) = MatchingLib.limitOrder(input, maxMatches);
+        (remaining, bidHead, askHead, used) = MatchingLib.limitOrderStrict(input, maxMatches);
         return StopOrderHandoffLib.handoff(stopOrderEngine, input, remaining, bidHead, askHead, used);
     }
 
-    /**
-     * @dev Determines if an order can be made at the market price,
-     * and if so, makes the an order on the orderbook.
-     * If an order cannot be made, transfers the remaining asset to either the orderbook or the user.
-     * @param base The address of the base asset for the trading pair
-     * @param quote The address of the quote asset for the trading pair
-     * @param pair The address of the orderbook contract for the trading pair
-     * @param remaining The remaining amount of the asset after the market order has been taken
-     * @param price The price used to determine if an order can be made
-     * @param isBid Boolean indicating if the order was a buy (true) or a sell (false)
-     * @param isMaker Boolean indicating if an order is for storing in orderbook or just take profit after matching trades
-     * @param recipient The address to receive asset after matching a trade and making an order
-     * @return id placed order id
-     */
-    function _detMake(
-        address base,
-        address quote,
-        address pair,
-        uint256 remaining,
-        uint256 price,
-        bool isBid,
-        bool isMaker,
-        address recipient
-    ) internal returns (uint32 id) {
-        if (remaining > 0) {
-            // If isMaker but remaining converts to zero (dust after partial matching),
-            // refund to recipient silently rather than placing an unexecutable maker order.
-            if (isMaker && _convert(pair, price, remaining, !isBid) > 0) {
-                TransferHelper.safeTransfer(isBid ? quote : base, pair, remaining);
-                id = _makeOrder(pair, remaining, price, isBid, recipient);
-                return id;
-            } else {
-                TransferHelper.safeTransfer(isBid ? quote : base, recipient, remaining);
-            }
-        }
-    }
-
-    /**
-     * @dev Deposit amount of asset to the contract with the given asset information and subtracts the fee.
-     * @param base The address of the base asset.
-     * @param quote The address of the quote asset.
-     * @param amount The amount of asset to deposit.
-     * @param isBid Whether it is an ask order or not.
-     * If ask, the quote asset is transferred to the contract.
-     * @return withoutFee The amount of asset without the fee.
-     * @return pair The address of the orderbook for the given asset pair.
-     */
     function _deposit(
         address base,
         address quote,
@@ -1739,44 +1720,26 @@ contract MatchingEngine is ReentrancyGuard, AccessControl, IMatchingEngine {
             revert OrderSizeTooSmall(converted, minRequired);
         }
 
-        if (isBid) {
-            // transfer input asset give user to this contract
-            if (quote != WETH) {
-                TransferHelper.safeTransferFrom(
-                    quote,
-                    msg.sender,
-                    address(this),
-                    amount
-                );
-            } else {
-                if (msg.value == 0) {
-                    TransferHelper.safeTransferFrom(
-                        quote,
-                        msg.sender,
-                        address(this),
-                        amount
-                    );
-                }
-            }
-        } else {
-            // transfer input asset give user to this contract
-            if (base != WETH) {
-                TransferHelper.safeTransferFrom(
-                    base,
-                    msg.sender,
-                    address(this),
-                    amount
-                );
-            } else {
-                if (msg.value == 0) {
-                    TransferHelper.safeTransferFrom(
-                        quote,
-                        msg.sender,
-                        address(this),
-                        amount
-                    );
-                }
-            }
+        // The leg being SPENT: quote on a bid, base on an ask. Pull it from the caller
+        // unless they funded it with native value instead.
+        //
+        // This replaces four nested branches that said the same thing twice, and it
+        // CHANGES ONE BEHAVIOUR: the ask branch used to pull `quote` when `base == WETH`
+        // and no value was sent -- the wrong leg, so selling pre-wrapped WETH could never
+        // work and reverted asking for funds the seller was not spending. See the note in
+        // contracts/CLAUDE.md that pre-wrapping "does not help".
+        //
+        // Under nativeScale this is also what makes the ordinary approve+ERC-20 path work
+        // on a chain whose native coin IS the ERC-20: msg.value == 0 falls through to the
+        // transferFrom, and a caller who already holds the token never has to send value.
+        address spend = isBid ? quote : base;
+        if (spend != WETH || msg.value == 0) {
+            TransferHelper.safeTransferFrom(
+                spend,
+                msg.sender,
+                address(this),
+                amount
+            );
         }
 
         lmp = IOrderbook(pair).lmp();

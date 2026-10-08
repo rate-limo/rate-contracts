@@ -659,7 +659,10 @@ contract LimitOrderTest is BaseSetup {
             })
         );
 
-        assert(matchingEngine.mktPrice(address(base), address(quote)) == 102e6);
+        // A resting order is a quote, not a trade: it no longer writes lmp (QuoteNotPrice.t.sol).
+        // These orders rest without crossing, so the price stays at the setup's matched 1e8,
+        // where it used to print the order's price clamped to lmp × (1 ± 2%).
+        assert(matchingEngine.mktPrice(address(base), address(quote)) == 1e8);
     }
 
     function testLimitBuySuspensionWhenBidAskHeadExistsAfterClearingHead() public {
@@ -703,7 +706,10 @@ contract LimitOrderTest is BaseSetup {
             })
         );
 
-        assert(matchingEngine.mktPrice(address(base), address(quote)) == 102e6);
+        // A resting order is a quote, not a trade: it no longer writes lmp (QuoteNotPrice.t.sol).
+        // These orders rest without crossing, so the price stays at the setup's matched 1e8,
+        // where it used to print the order's price clamped to lmp × (1 ± 2%).
+        assert(matchingEngine.mktPrice(address(base), address(quote)) == 1e8);
     }
 
     function testLimitSellNoSuspensionWhenBidAskHeadExists() public {
@@ -747,7 +753,10 @@ contract LimitOrderTest is BaseSetup {
             })
         );
 
-        assert(matchingEngine.mktPrice(address(base), address(quote)) == 98e6);
+        // A resting order is a quote, not a trade: it no longer writes lmp (QuoteNotPrice.t.sol).
+        // These orders rest without crossing, so the price stays at the setup's matched 1e8,
+        // where it used to print the order's price clamped to lmp × (1 ± 2%).
+        assert(matchingEngine.mktPrice(address(base), address(quote)) == 1e8);
     }
 
     function testLimitSellSuspensionWhenBidAskHeadExistsAfterClearingHead() public {
@@ -791,7 +800,10 @@ contract LimitOrderTest is BaseSetup {
             })
         );
 
-        assert(matchingEngine.mktPrice(address(base), address(quote)) == 98e6);
+        // A resting order is a quote, not a trade: it no longer writes lmp (QuoteNotPrice.t.sol).
+        // These orders rest without crossing, so the price stays at the setup's matched 1e8,
+        // where it used to print the order's price clamped to lmp × (1 ± 2%).
+        assert(matchingEngine.mktPrice(address(base), address(quote)) == 1e8);
     }
 
     function testLimitBuyAllowsBelowLMP() public {

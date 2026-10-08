@@ -165,10 +165,10 @@ contract PoCDustClearFlagLiesTest is BaseSetup {
     function testDustOrderIsRefundedAndDeletedWithNoEventAtAll() public {
         super.setUp();
 
-        // ETH/USDC-shaped: base 18dec, quote 6dec, ~$3000. Here `dust` in
-        // _decreaseOrder floors to ZERO (see DecimalsDustBonus's second case), so a
-        // leftover is NOT cleaned up on the way out -- it survives on the book and is
-        // evaluated by `fpop` on the next sweep, which is where `required == 0` lives.
+        // ETH/USDC-shaped: base 18dec, quote 6dec, ~$3000. `_decreaseOrder` keeps a
+        // nonzero leftover, and `required == 0` lives in `fpop`. Until 2026-10-04 only
+        // the NEXT taker's `fpop` asked it, so the leftover rested until then; now the
+        // fill that leaves it asks too (MatchingLib._evictIfDust) and evicts it at once.
         MockToken base18 = new MockToken("Eighteen", "E18", 18);
         MockToken quote6 = new MockToken("SixDec", "SIX", 6);
 
@@ -205,12 +205,16 @@ contract PoCDustClearFlagLiesTest is BaseSetup {
         // Deliver strictly LESS than that, so this is a partial fill and `clear` is
         // false: 5.8e12 base converts to 17,400 quote, leaving a 2,600 remainder.
         // Under 3,000 that remainder converts to zero base -- the `required == 0`
-        // condition -- and dust being zero means nothing cleans it up on the way past.
+        // condition, so the fill that leaves it must evict it.
         assertEq(IOrderbook(pair).convert(price, makerDeposit, false), 6e12, "precondition: full clear needs 6e12");
         uint256 firstFill = 5.8e12; // -> converted 17,400 quote, leaving 2,600
+        // Since 2026-10-04 the eviction happens HERE, in the match that leaves the
+        // dust (MatchingLib._evictIfDust), not when a later taker reaches the level.
+        uint256 makerQuoteBefore = quote6.balanceOf(trader1);
         base18.mint(trader2, firstFill);
         vm.prank(trader2);
         base18.approve(address(matchingEngine), firstFill);
+        vm.recordLogs();
         vm.prank(trader2);
         matchingEngine.limitSell(
             IMatchingEngine.LimitOrderInput({
@@ -224,36 +228,11 @@ contract PoCDustClearFlagLiesTest is BaseSetup {
             })
         );
 
-        assertFalse(IOrderbook(pair).isEmpty(true, price), "remainder should still be resting");
+        Vm.Log[] memory logs = vm.getRecordedLogs();
         assertEq(
             IOrderbook(pair).convert(price, 2600, false), 0,
             "precondition: the 2,600 remainder converts to zero base units"
         );
-
-        uint256 makerQuoteBefore = quote6.balanceOf(trader1);
-
-        // Second taker sweeps the level. fpop takes the `required == 0` branch:
-        // deletes the order, refunds the maker, returns (0, 0, true) -- and matchAt's
-        // `else if (required == 0) { ++i; continue; }` emits nothing.
-        uint256 secondFill = 1e15;
-        base18.mint(attacker, secondFill);
-        vm.prank(attacker);
-        base18.approve(address(matchingEngine), secondFill);
-
-        vm.recordLogs();
-        vm.prank(attacker);
-        matchingEngine.limitSell(
-            IMatchingEngine.LimitOrderInput({
-                base: address(base18),
-                quote: address(quote6),
-                price: price,
-                amount: secondFill,
-                isMaker: true,
-                n: 5,
-                recipient: attacker
-            })
-        );
-        Vm.Log[] memory logs = vm.getRecordedLogs();
 
         uint256 refunded = quote6.balanceOf(trader1) - makerQuoteBefore;
         bool bookEmpty = IOrderbook(pair).isEmpty(true, price);
