@@ -2,7 +2,7 @@
  * DELIBERATELY UNWIRED. Nothing calls this library.
  *
  * It is a complete on-chain earn engine (seasons, per-market multipliers,
- * maker+taker minting), but Tritium points are computed OFF-CHAIN by the broker
+ * maker+taker minting), but Point points are computed OFF-CHAIN by the broker
  * instead — see docs/superpowers/specs/2026-07-30-tritium-points-design.md.
  * Three reasons: every trade would pay gas for a convert() plus a double mint,
  * a defect here could revert trades, and it cannot observe liquidity or

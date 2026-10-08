@@ -2,19 +2,19 @@
 pragma solidity ^0.8.24;
 
 import {Test} from "forge-std/Test.sol";
-import {Tritium} from "../../src/point/Tritium.sol";
+import {Point} from "../../src/point/Point.sol";
 
-contract TritiumTest is Test {
-    Tritium internal t;
+contract PointTest is Test {
+    Point internal t;
     address internal alice = address(0xA11CE);
 
     function setUp() public {
-        t = new Tritium();
+        t = new Point();
     }
 
     function test_NameAndSymbol() public view {
-        assertEq(t.name(), "Tritium");
-        assertEq(t.symbol(), "T");
+        assertEq(t.name(), "Point");
+        assertEq(t.symbol(), "P");
     }
 
     /// The bug this contract exists to fix: ITERXP.mint() set penalties[to] = 0

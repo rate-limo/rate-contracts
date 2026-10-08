@@ -67,7 +67,7 @@ When working with src, especially in a live environment, security is paramount. 
 - Regularly audit your src for vulnerabilities.
 - Keep private keys and sensitive information secure.
 
-If you discover any security issues or vulnerabilities, please report them responsibly to our team via a [private security advisory](https://github.com/iter-cx/iter-contracts/security/advisories/new).
+If you discover any security issues or vulnerabilities, please report them responsibly to our team via a [private security advisory](https://github.com/rate-limo/rate-contracts/security/advisories/new).
 
 ---
 
