@@ -8,9 +8,13 @@ interface IPoolFactory {
 
     function impl() external view returns (address);
 
-    function createPool(address base_, address quote_, address orderbook_) external returns (address pool);
+    /// @param creator Who may configure the pool's bands: the address that listed the pair.
+    function createPool(address base_, address quote_, address orderbook_, address creator) external returns (address pool);
 
     function getPool(address base, address quote) external view returns (address pool);
+
+    /// Sync the pair's pool with the pair's current limit. A no-op when it has no pool.
+    function syncLimit(address base, address quote) external;
 
     function isClone(address vault) external view returns (bool cloned);
 }
