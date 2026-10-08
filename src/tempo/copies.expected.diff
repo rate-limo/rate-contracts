@@ -1,0 +1,39 @@
+--- src/asset/AssetGenerator.sol
++++ src/tempo/TempoAssetGenerator.sol
+@@
+         emit Launched(coin, msg.sender, l.pair, quote, initialSupply);
+-        // Last: every piece of state is written before any value leaves.
+-        AssetLaunchLib.payFee(feeTo, launchFee);
++        // TEMPO: no `payFee`. The fee was taken in the quote token by `settleListing`, and
++        // Tempo refuses any transaction carrying value, so there is never anything to refund.
+     }
+--- src/asset/libraries/AssetLaunchLib.sol
++++ src/tempo/TempoAssetLaunchLib.sol
+@@
+     {
+-        if (msg.value < a.launchFee) revert InsufficientFee(msg.value, a.launchFee);
+-        if (a.launchFee > 0 && a.feeTo == address(0)) revert FeeToNotSet();
++        // TEMPO: Tempo has no native coin (CALLVALUE is always 0 and value transfers are
++        // refused), so the launch fee is taken in the launch's QUOTE token (a TIP-20, e.g.
++        // PathUSD) and `launchFee` is in that token's units. feeTo is an admin-set address
++        // and the quote a TIP-20 without hooks, so paying it here, before the generator
++        // finishes writing state, hands control to nobody.
++        if (a.launchFee > 0) {
++            if (a.feeTo == address(0)) revert FeeToNotSet();
++            TransferHelper.safeTransferFrom(a.quote, msg.sender, a.feeTo, a.launchFee);
++        }
+ 
+@@
+ 
+-    /// @notice Pays the launch fee and refunds the rest. The generator calls it LAST.
+-    function payFee(address feeTo, uint256 launchFee) public {
+-        if (launchFee > 0) TransferHelper.safeTransferETH(feeTo, launchFee);
+-        uint256 refund = msg.value - launchFee;
+-        if (refund > 0) {
+-            (bool ok,) = payable(msg.sender).call{value: refund}("");
+-            if (!ok) revert RefundFailed();
+-        }
+-    }
++    // TEMPO: no `payFee`. The fee is taken in the quote token by `settleListing`, and a
++    // Tempo transaction can carry no value to refund.
+ 
