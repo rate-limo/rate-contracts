@@ -184,8 +184,16 @@ deployed_address() {
 
 
 # ── forge runner ─────────────────────────────────────────────────────────────
+# `contract` is the name of the DEPLOYED contract as forge records it in the
+# broadcast artifact (MatchingLib, MatchingEngine) -- NOT the script contract
+# (DeployMatchingLib, DeployExchangeMainnetContracts), which never appears there.
+# It is a separate argument because the previous version read `$1` AFTER the
+# shift, so it looked up a contract literally named "forge", found nothing, and
+# killed the run with "Failed to parse ... address" immediately after a
+# successful broadcast -- the deploy had landed on chain and the script reported
+# failure.
 run_forge() {
-  local label="$1"; shift
+  local label="$1" contract="$2"; shift 2
   local cmd=("$@")
 
   >&2 echo ""
@@ -205,7 +213,7 @@ run_forge() {
 
   local output
   output=$("${cmd[@]}" 2>&1 | tee /dev/stderr)
-  deployed_address "$1" "$SCRIPT_FILE"
+  deployed_address "$contract" "$SCRIPT_FILE"
 }
 
 # ── main workflow ─────────────────────────────────────────────────────────────
@@ -230,11 +238,17 @@ if [[ "$MODE" == "lib-only" || "$MODE" == "full" ]]; then
     warn "Skipping lib deployment. Use --mode lib-only to force a fresh deploy."
     warn "Continuing to engine deployment with existing lib address..."
   else
+    # --slow: one transaction at a time, waiting for each receipt. Arc rejects a
+    # whole batch with `txpool is full`, and the retry then aborts on a nonce that
+    # has moved under it -- which reads as "nothing deployed" while the first
+    # run's contracts are in fact landing. It costs wall-clock on a healthy chain
+    # and is the difference between a deploy and a forensic exercise on a busy one.
     info "Deploying MatchingLib..."
-    LIB_ADDRESS=$(run_forge "Deploy MatchingLib" \
+    LIB_ADDRESS=$(run_forge "Deploy MatchingLib" MatchingLib \
       forge script "$FORGE_SCRIPT_PATH:DeployMatchingLib" \
       --rpc-url "$RPC_URL" \
       --broadcast \
+      --slow \
       --private-key "$DEPLOYER_KEY")
 
     if [[ -z "$LIB_ADDRESS" || "$LIB_ADDRESS" == "0xDRYRUN"* ]]; then
@@ -260,10 +274,11 @@ if [[ "$MODE" == "engine-only" || "$MODE" == "full" ]]; then
 
   info "Deploying MatchingEngine (linked to MatchingLib @ $LIB_ADDRESS)..."
 
-  ENGINE_ADDRESS=$(run_forge "Deploy MatchingEngine" \
+  ENGINE_ADDRESS=$(run_forge "Deploy MatchingEngine" MatchingEngine \
     forge script "$FORGE_SCRIPT_PATH:$CONTRACT_NAME" \
     --rpc-url "$RPC_URL" \
     --broadcast \
+    --slow \
     --libraries "$LIB_PATH:$LIB_ADDRESS" \
     --private-key "$DEPLOYER_KEY")
 

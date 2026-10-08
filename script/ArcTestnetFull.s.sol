@@ -11,48 +11,50 @@ import {BandPositionManager} from "../src/swap/BandPositionManager.sol";
 import {BandPool} from "../src/swap/BandPool.sol";
 import {PositionDescriptor} from "../src/swap/PositionDescriptor.sol";
 import {BandSwapRouter} from "../src/swap/BandSwapRouter.sol";
-import {WETH9} from "../src/mock/WETH9.sol";
 
-/// The whole stack in one broadcast: exchange, swap system, and every wiring call between
-/// them. Previously this was two scripts that did not know about each other --
-/// script/exchange/RiseTestnet.s.sol stopped at MatchingEngine, and nothing deployed the
-/// swap side at all -- so a full bring-up meant hand-copying addresses between runs. Doing
-/// it in one transaction removes that step and, more importantly, removes the chance of
-/// stopping halfway with a chain that lists pairs and cannot trade.
+/// Arc Testnet (5042002) bring-up: exchange, swap system, and every wiring call between
+/// them, in one broadcast.
 ///
-/// Ordering constraints, none of them free-form:
+/// Structurally identical to RiseTestnetFull.s.sol and deliberately so -- the ordering
+/// constraints below are properties of the contracts, not of a chain, and the sequence is
+/// the one test/swap/DeploymentWiring.t.sol executes end to end and then trades through:
+///
 ///   * OrderbookFactory.initialize must precede MatchingEngine.initialize -- the engine
 ///     reads factory.impl() and reverts FactoryNotInitialized if it is unset.
-///   * BandPoolFactory.initialize deploys the Pool implementation every pair's pool is cloned
-///     from, so it must precede any pair listing.
+///   * BandPoolFactory.initialize deploys the Pool implementation every pair's pool is
+///     cloned from, so it must precede any pair listing.
 ///   * MatchingEngine.setSwapRouter must happen at all. Pool.swap is onlyRouter and reads
 ///     this address off the engine; while it is address(0) every swap reverts NotRouter,
 ///     and nothing else about the deployment looks wrong.
 ///
-/// The sequence here is the one test/swap/DeploymentWiring.t.sol executes end to end and
-/// then trades through.
-contract DeployAll is Script {
+/// ## What is NOT the same as RISE, and must not be copied from it
+///
+/// **Arc's native gas currency is USDC, not ether.** That is the one substantive
+/// difference, and it lands on WRAPPED_NATIVE below rather than on any of the wiring.
+contract DeployArcTestnet is Script {
     // ---------------------------------------------------------------- configuration
 
-    // Canonical WETH for the target chain. Left at address(0) a fresh WETH9 is deployed,
-    // which is right for a testnet and wrong for anywhere real: WETH is a standalone
-    // ERC-20 with no coupling to the engine, so minting a second one on a redeploy
-    // strands every balance anyone has already wrapped and gives nothing back.
-    //
-    // **This must be the WETH the LIVE engine reports from `WETH()`.** It is the one
-    // address in the stack that no broadcast record contains — the deploy script does
-    // not create it — so nothing derives it and nothing catches a disagreement except
-    // `pnpm --filter @iter/deployments verify`, which now compares the two.
-    //
-    // It said 0x63443A61… until 2026-08-15, with a comment claiming 0x008fCD… was "from
-    // another chain entirely" and would bind the engine to a non-contract on Rise. That
-    // is not true and was checkable: 0x008fCD… has code on Rise, answers symbol()
-    // "WETH" / name() "Wrapped Ether" / decimals() 18, and holds ~44 ETH. The active
-    // deploy path — `scripts/deploy-exchange.sh` runs `RiseTestnet.s.sol`, not this
-    // script — has always used it, so the two scripts disagreed and only the dormant one
-    // was wrong. A market listed against the other WETH quotes on chain and can never be
-    // routed to from the app, which is how the whole of 2026-08-15 was spent.
-    address constant WETH = 0x008fCD6315c68EbAa31244aea174993f63Ef14D5;
+    /// The ERC-20 the engine reports from `WETH()`. On Arc this is USDC ITSELF -- the
+    /// native gas coin is USDC and USDC is already an ERC-20 at this address, so there is
+    /// nothing to wrap.
+    ///
+    /// The first bring-up deployed a WrappedNative (WUSDC) here, because MatchingEngine
+    /// assumed the slot held a WETH9-shaped wrapper it could deposit()/withdraw() into.
+    /// That wrapper was pure overhead: a second "USDC" in every token list, a phantom row
+    /// in the balances panel, and -- worse -- MatchingEngine skips Pool creation for any
+    /// pair touching WETH, which would have made the chain's primary quote asset the one
+    /// asset that could never have pool liquidity.
+    ///
+    /// `nativeScale` (below) is what makes this address usable in the slot: it tells the
+    /// engine this token needs no wrapping and how the two views' decimals relate.
+    /// Verified on chain: deposit() and withdraw(uint256) do not exist here and revert
+    /// exactly like a garbage selector, while balanceOf/totalSupply answer.
+    address constant WRAPPED_NATIVE = 0x3600000000000000000000000000000000000000;
+
+    /// Native wei per one WETH() token unit. Arc's native view is 18 decimals and its
+    /// ERC-20 view is 6 -- one ledger at two precisions -- so 1e12. Zero would mean "this
+    /// slot is a real wrapper", which on Arc reverts every native-in order.
+    uint256 constant NATIVE_SCALE = 1e12;
 
     /// Receives protocol fees. address(0) uses the deployer.
     address constant FEE_TO = address(0);
@@ -71,28 +73,40 @@ contract DeployAll is Script {
 
     string constant POSITION_URI = "ipfs://iter-position/{id}.json";
 
-    /// Spreads are NOT set here: MatchingEngine.initialize already writes the production
-    /// defaults (market 0.1%, limit 3%). Note what that means for this deployment -- a 0.1%
-    /// market spread against a typical 5% LP slippage tier means the rail clamps every pool
-    /// fill, so lmp records the rail rather than the price the swap traded at. That is the
-    /// chosen configuration, pinned by
-    /// test/swap/DeploymentWiring.t.sol:testProductionSpreadMeansTheRailNotTheFillIsRecorded.
+    /// Spreads are NOT set here: MatchingEngine.initialize writes the production defaults
+    /// (market 0.1%, limit 3%). Record what that implies for this chain in
+    /// deployments.json rather than discovering it later -- a 0.1% market spread against a
+    /// typical 5% LP slippage tier means the rail clamps every pool fill, so `lmp` records
+    /// the rail rather than the price the swap traded at. That is
+    /// config.matchedPriceReporting = false, and it is a measured property of the
+    /// deployed spread, not a default to copy from RISE.
 
     /// Signer resolution, in order of preference. The keystore and hardware paths are
     /// first because they never put a private key in an environment variable, a shell
     /// history, or a process listing:
     ///
-    ///   forge script ... --account riseDeployer      (encrypted keystore, prompts)
+    ///   forge script ... --account arcDeployer       (encrypted keystore, prompts)
     ///   forge script ... --ledger                    (hardware wallet)
     ///   forge script ... --private-key $KEY          (forge reads it, script does not)
-    ///   RISE_TESTNET_DEPLOYER_KEY=0x... forge script ...   (last resort)
+    ///   DEPLOYER_KEY=0x... forge script ...          (last resort; contracts/.env)
     ///
     /// Only the last form needs the env var, and it is only consulted if the first three
     /// were not used -- vm.startBroadcast() with no argument lets forge supply whichever
     /// signer the flags selected.
+    ///
+    /// `DEPLOYER_KEY`, NOT `ARC_TESTNET_DEPLOYER_KEY`. A chain-suffixed name is the exact
+    /// mistake CLAUDE.md records under "One secret, one name": deploy-exchange.sh read
+    /// `LINEA_TESTNET_DEPLOYER_KEY` for nine of its ten chains, so the same key was
+    /// expected under one name by a shell wrapper and another by the script it invoked.
+    /// RiseTestnetFull.s.sol still carries `RISE_TESTNET_DEPLOYER_KEY`; it is the dormant
+    /// script, and that is not a precedent to copy.
     function run() external {
+        // A wrong-chain broadcast is silent and expensive: the deploy succeeds, the
+        // registry records addresses, and the indexer watches a chain nobody trades on.
+        require(block.chainid == 5042002, "not Arc Testnet (5042002)");
+
         address deployer;
-        uint256 envKey = vm.envOr("RISE_TESTNET_DEPLOYER_KEY", uint256(0));
+        uint256 envKey = vm.envOr("DEPLOYER_KEY", uint256(0));
         if (envKey != 0) {
             deployer = vm.addr(envKey);
             vm.startBroadcast(envKey);
@@ -105,15 +119,16 @@ contract DeployAll is Script {
         // ---- exchange ----
         address matchingLib = deployCode("MatchingLib.sol:MatchingLib");
 
-        address weth = WETH;
-        if (weth == address(0)) {
-            weth = address(new WETH9());
-        }
+        address wrappedNative = WRAPPED_NATIVE;
 
         OrderbookFactory orderbookFactory = new OrderbookFactory();
         MatchingEngine engine = new MatchingEngine();
         orderbookFactory.initialize(address(engine));
-        engine.initialize(address(orderbookFactory), feeTo, weth);
+        engine.initialize(address(orderbookFactory), feeTo, wrappedNative);
+        // MUST precede addPair: the engine consults nativeScale when deciding whether a
+        // WETH-linked pair may have a Pool, and a pair listed before this is set keeps the
+        // decision taken at its listing.
+        engine.setNativeScale(NATIVE_SCALE);
 
         engine.setDefaultFee(true, MAKER_FEE);
         engine.setDefaultFee(false, TAKER_FEE);
@@ -142,26 +157,23 @@ contract DeployAll is Script {
         require(sw.poolFactory.impl() == address(sw.poolImpl), "pool implementation missing");
         require(sw.positionManager.descriptor() == address(sw.descriptor), "descriptor not wired");
         require(sw.poolFactory.positionManager() == address(sw.positionManager), "positionManager not wired");
-        // The manager holds no router of its own: it reads the engine's, which is the
-        // same slot the pool's onlyRouter gate reads. One source, wired once.
-        require(engine.swapRouter() == address(sw.router), "swapRouter not wired");
 
         console.log("");
-        console.log("=== deployed ===");
+        console.log("=== deployed (Arc Testnet 5042002) ===");
         console.log("MatchingLib          %s", matchingLib);
-        console.log("WETH                 %s", weth);
+        console.log("WETH() (= USDC)      %s", wrappedNative);
         console.log("OrderbookFactory     %s", address(orderbookFactory));
         console.log("MatchingEngine       %s", address(engine));
         console.log("StopOrderEngine      %s", address(stopOrderEngine));
-        console.log("BandPoolFactory          %s", address(sw.poolFactory));
+        console.log("BandPoolFactory      %s", address(sw.poolFactory));
         console.log("PoolImplementation   %s", sw.poolFactory.impl());
-        console.log("BandPositionManager      %s", address(sw.positionManager));
+        console.log("BandPositionManager  %s", address(sw.positionManager));
         console.log("PositionDescriptor   %s", address(sw.descriptor));
-        console.log("BandSwapRouter           %s", address(sw.router));
+        console.log("BandSwapRouter       %s", address(sw.router));
         console.log("");
         console.log("=== indexer env ===");
-        console.log("CHAINID=11155931");
-        console.log("RPC=https://testnet.riselabs.xyz/");
+        console.log("CHAINID=5042002");
+        console.log("RPC=https://rpc.testnet.arc.network");
         console.log("MATCHING_ENGINE_ADDRESS=%s", address(engine));
         console.log("STOP_ORDER_ENGINE_ADDRESS=%s", address(stopOrderEngine));
         console.log("POOL_FACTORY_ADDRESS=%s", address(sw.poolFactory));

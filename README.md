@@ -44,13 +44,13 @@ Each money lego has README to build, test, and deploy with LICENSE.
 
 First, clone the repository
 ```
-https://github.com/iter-cx/iter-contracts.git
+https://github.com/rate-limo/rate-contracts.git
 ```
 Then, check each money lego directory's README for further development guidance.
 
 ## Docs
 
-Each money lego's README covers its own concepts, build and deploy steps; [`src/deploy.md`](src/deploy.md) covers deployment across the monorepo. The app lives at [iter.cx](https://iter.cx).
+Each money lego's README covers its own concepts, build and deploy steps; [`src/deploy.md`](src/deploy.md) covers deployment across the monorepo. The app lives at [rate.limo](https://rate.limo).
 
 ## Security
 

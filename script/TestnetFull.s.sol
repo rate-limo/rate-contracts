@@ -13,47 +13,22 @@ import {PositionDescriptor} from "../src/swap/PositionDescriptor.sol";
 import {BandSwapRouter} from "../src/swap/BandSwapRouter.sol";
 import {WETH9} from "../src/mock/WETH9.sol";
 
-/// The whole stack in one broadcast: exchange, swap system, and every wiring call between
-/// them. Previously this was two scripts that did not know about each other --
-/// script/exchange/RiseTestnet.s.sol stopped at MatchingEngine, and nothing deployed the
-/// swap side at all -- so a full bring-up meant hand-copying addresses between runs. Doing
-/// it in one transaction removes that step and, more importantly, removes the chance of
-/// stopping halfway with a chain that lists pairs and cannot trade.
+/// The full exchange + swap stack for any EVM testnet whose gas coin is wrapped by a plain
+/// WETH9 (Monad Testnet, Robinhood Chain Testnet). Identical in sequence and wiring to
+/// RiseTestnetFull.s.sol, which this was copied from; only the wrapped-native address is
+/// a parameter instead of a constant, so a new chain does not need a new script.
 ///
-/// Ordering constraints, none of them free-form:
-///   * OrderbookFactory.initialize must precede MatchingEngine.initialize -- the engine
-///     reads factory.impl() and reverts FactoryNotInitialized if it is unset.
-///   * BandPoolFactory.initialize deploys the Pool implementation every pair's pool is cloned
-///     from, so it must precede any pair listing.
-///   * MatchingEngine.setSwapRouter must happen at all. Pool.swap is onlyRouter and reads
-///     this address off the engine; while it is address(0) every swap reverts NotRouter,
-///     and nothing else about the deployment looks wrong.
+///   WRAPPED_NATIVE=0x...   reuse an existing wrapper (must be what the engine's WETH() is to be)
+///   unset                  deploy a fresh WETH9, right for a testnet's first bring-up
 ///
-/// The sequence here is the one test/swap/DeploymentWiring.t.sol executes end to end and
-/// then trades through.
-contract DeployAll is Script {
-    // ---------------------------------------------------------------- configuration
-
-    // Canonical WETH for the target chain. Left at address(0) a fresh WETH9 is deployed,
-    // which is right for a testnet and wrong for anywhere real: WETH is a standalone
-    // ERC-20 with no coupling to the engine, so minting a second one on a redeploy
-    // strands every balance anyone has already wrapped and gives nothing back.
-    //
-    // **This must be the WETH the LIVE engine reports from `WETH()`.** It is the one
-    // address in the stack that no broadcast record contains — the deploy script does
-    // not create it — so nothing derives it and nothing catches a disagreement except
-    // `pnpm --filter @iter/deployments verify`, which now compares the two.
-    //
-    // It said 0x63443A61… until 2026-08-15, with a comment claiming 0x008fCD… was "from
-    // another chain entirely" and would bind the engine to a non-contract on Rise. That
-    // is not true and was checkable: 0x008fCD… has code on Rise, answers symbol()
-    // "WETH" / name() "Wrapped Ether" / decimals() 18, and holds ~44 ETH. The active
-    // deploy path — `scripts/deploy-exchange.sh` runs `RiseTestnet.s.sol`, not this
-    // script — has always used it, so the two scripts disagreed and only the dormant one
-    // was wrong. A market listed against the other WETH quotes on chain and can never be
-    // routed to from the app, which is how the whole of 2026-08-15 was spent.
-    address constant WETH = 0x008fCD6315c68EbAa31244aea174993f63Ef14D5;
-
+/// Driven by scripts/redeploy-testnet.sh, which also deploys the launch side and syncs the
+/// registry; run it rather than this alone.
+///
+/// Ordering constraints, none of them free-form (see RiseTestnetFull.s.sol for the long form):
+///   * OrderbookFactory.initialize before MatchingEngine.initialize.
+///   * BandPoolFactory.initialize (which deploys the pool implementation) before any listing.
+///   * MatchingEngine.setSwapRouter must happen, or every swap reverts NotRouter.
+contract DeployTestnetFull is Script {
     /// Receives protocol fees. address(0) uses the deployer.
     address constant FEE_TO = address(0);
 
@@ -85,14 +60,14 @@ contract DeployAll is Script {
     ///   forge script ... --account riseDeployer      (encrypted keystore, prompts)
     ///   forge script ... --ledger                    (hardware wallet)
     ///   forge script ... --private-key $KEY          (forge reads it, script does not)
-    ///   RISE_TESTNET_DEPLOYER_KEY=0x... forge script ...   (last resort)
+    ///   DEPLOYER_KEY=0x... forge script ...                (last resort)
     ///
     /// Only the last form needs the env var, and it is only consulted if the first three
     /// were not used -- vm.startBroadcast() with no argument lets forge supply whichever
     /// signer the flags selected.
     function run() external {
         address deployer;
-        uint256 envKey = vm.envOr("RISE_TESTNET_DEPLOYER_KEY", uint256(0));
+        uint256 envKey = vm.envOr("DEPLOYER_KEY", uint256(0));
         if (envKey != 0) {
             deployer = vm.addr(envKey);
             vm.startBroadcast(envKey);
@@ -105,7 +80,7 @@ contract DeployAll is Script {
         // ---- exchange ----
         address matchingLib = deployCode("MatchingLib.sol:MatchingLib");
 
-        address weth = WETH;
+        address weth = vm.envOr("WRAPPED_NATIVE", address(0));
         if (weth == address(0)) {
             weth = address(new WETH9());
         }
@@ -160,8 +135,7 @@ contract DeployAll is Script {
         console.log("BandSwapRouter           %s", address(sw.router));
         console.log("");
         console.log("=== indexer env ===");
-        console.log("CHAINID=11155931");
-        console.log("RPC=https://testnet.riselabs.xyz/");
+        console.log("CHAINID=%s", block.chainid);
         console.log("MATCHING_ENGINE_ADDRESS=%s", address(engine));
         console.log("STOP_ORDER_ENGINE_ADDRESS=%s", address(stopOrderEngine));
         console.log("POOL_FACTORY_ADDRESS=%s", address(sw.poolFactory));

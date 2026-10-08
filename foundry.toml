@@ -13,6 +13,15 @@
 # the EIP-170 limit of 24,576 -- so these are not free parameters: a wrong `runs` pushes it
 # over and the deploy fails partway through, leaving a half-wired chain.
 #
+# Sizes as of 2026-08-29: MatchingEngine is 24,477, leaving 99. The `nativeScale` work
+# spent most of the old margin. `forge build --sizes` is the check; it needs the `skip`
+# below to run at all.
+#
+# `via_ir` is deliberately UNSET and must stay that way. Under --via-ir MatchingEngine
+# compiles to 29,132 bytes and forge refuses it as over EIP-170, while the legacy pipeline
+# gives 24,477 -- byte-for-byte what is live on Arc and RISE. The test suite passes under
+# either pipeline. See contracts/CLAUDE.md, "Do NOT pass --via-ir to a DEPLOY".
+#
 # Verified 2026-08-06 against the live contract: of 24,347 bytes exactly 52 differ, in two
 # runs, both expected --
 #   * 20 bytes @15575: the MatchingLib link placeholder (`__$7b0ead...$__`) where the live
@@ -32,6 +41,13 @@ libs = ["lib"]
 test = "test"
 script = "script"
 
+# openzeppelin-contracts-upgradeable ships Certora harnesses that import
+# `certora/patched/...`, a tree their own Makefile generates and which is not in the
+# checkout. Nothing here imports them, but `forge build` walks them and dies with
+# "Source ... not found", which is why `forge build --sizes` -- the command CI runs --
+# could not run at all.
+skip = ["lib/openzeppelin-contracts-upgradeable/certora/**"]
+
 solc = "0.8.24"
 optimizer = true
 optimizer_runs = 200
@@ -48,6 +64,22 @@ optimizer_runs = 200
 # out-of-gas behaviour bounds its own inner call with `call{gas: N}` (see
 # UnboundedOrderQueue.regression.t.sol and the PoC above), which this does not touch.
 gas_limit = 3000000000
+
+# Each top-level call is metered as its own TRANSACTION: a fresh EIP-2929 access list, so
+# every slot starts COLD. That is the only regime that prices what a user actually sends,
+# and the difference is not small -- the settle-and-rest tail of a limit order measures
+# ~289,000 warm against ~353,000 cold.
+#
+# Set explicitly for the same reason as `gas_limit` above: it is a DEFAULT that moved.
+# Foundry flipped it false -> true in 1.8.x, CI installs `nightly`, and the flip turned one
+# gas-reserve test red on a bug that had been live the whole time -- `MATCH_GAS_RESERVE` was
+# sized from warm measurements and could not cover its own tail. Six weeks of green CI had
+# been measuring a regime that does not exist on chain. See MatchingLib's docstring and
+# test/exchange/orderbook/ReserveSweep.t.sol.
+#
+# Do NOT set this false to make a gas assertion pass. A test that only holds warm is
+# asserting something about the test suite, not about the contract.
+isolate = true
 
 # openzeppelin-foundry-upgrades (script/exchange/RiseTestnet.s.sol) needs all three to run
 # its storage-layout safety checks. Harmless for the scripts that do not use it.
@@ -71,3 +103,8 @@ verbosity = 3
 
 [rpc_endpoints]
 rise_testnet = "https://testnet.riselabs.xyz/"
+# Arc Testnet (5042002). Two public RPCs; the drpc mirror is the fallback when
+# rpc.testnet.arc.network rate-limits a broadcast. Both were confirmed to report
+# 0x4cef52 from eth_chainId before this line was added.
+arc_testnet = "https://rpc.testnet.arc.network"
+arc_testnet_drpc = "https://arc-testnet.drpc.org"
