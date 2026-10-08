@@ -51,7 +51,7 @@ contract MembershipTest is PointFarmSetup {
         vm.prank(trader1);
         string memory uri = pass.uri(1);
         assert(
-            keccak256(abi.encodePacked(uri)) == keccak256(abi.encodePacked("https://iter.cx/api/pass/9"))
+            keccak256(abi.encodePacked(uri)) == keccak256(abi.encodePacked("https://rate.limo/api/pass/9"))
         );
     }
 }

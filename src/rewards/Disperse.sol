@@ -24,7 +24,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
  * already computed the amounts (see `admin-service`); this contract's only job is making
  * the resulting transfers atomic and auditable from one receipt.
  *
- * @custom:security-contact security@iter.cx
+ * @custom:security-contact security@rate.limo
  */
 contract Disperse {
     using SafeERC20 for IERC20;

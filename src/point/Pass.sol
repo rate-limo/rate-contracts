@@ -30,7 +30,7 @@ contract Pass is ERC1155, AccessControl, Initializable {
     error CannotBurn();
     error NotUIDOwner(address user, uint256 uid);
 
-    constructor() ERC1155("https://iter.cx/api/pass") {
+    constructor() ERC1155("https://rate.limo/api/pass") {
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
         index = 1;
     }
@@ -40,7 +40,7 @@ contract Pass is ERC1155, AccessControl, Initializable {
             revert InvalidRole(DEFAULT_ADMIN_ROLE, msg.sender);
         }
         pointFarm = pointFarm_;
-        baseURI = "https://iter.cx/api/pass";
+        baseURI = "https://rate.limo/api/pass";
     }
 
     function setURI(string memory uri_) public {

@@ -7,6 +7,6 @@ import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 /// @title Metadata contract for pass
 contract Metadata is AccessControl {
     function uri(uint256 id_) public view virtual returns (string memory) {
-        return "https://iter.cx/api/pass/metadata";
+        return "https://rate.limo/api/pass/metadata";
     }
 }
