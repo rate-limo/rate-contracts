@@ -4,401 +4,334 @@ pragma solidity ^0.8.24;
 import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
 
 /// @title PositionSVG
-/// @notice Pure on-chain renderer for ITER swap liquidity positions.
-/// @dev Follows the house idiom of `src/svg/libraries/NFTSVG.sol`: a library of
-///      `internal pure` builders taking a struct of pre-formatted strings, so the
-///      descriptor contract owns every external read and this file can never
-///      revert on a bad oracle.
+/// @notice Pure on-chain renderer for ITER band-pool LP tokens.
+/// @dev One token is one position and holds the WHOLE band ladder, so the card draws
+///      every band the token holds: a stacked distribution bar, then one row per band
+///      with its live tolerance, fee multiplier and share of the position's value.
 ///
-///      Colors are the Monet **dark** ramp from `apps/web/app/globals.css`. NFT
-///      viewers do not honour `prefers-color-scheme`, so the card commits to one
-///      ground rather than shipping a media query that silently never fires.
+///      Shares cannot be summed across bands -- each band is its own share pool -- so a
+///      band's percentage is its VALUE at the anchor over the token's total value, and
+///      the stacked bar uses the same widths. The descriptor computes those; this file
+///      only lays them out.
 ///
-///      Everything is assembled from the small `_text` / `_attr` builders below.
-///      These are `internal`, so they inline into whatever contract calls
-///      `render` — and this repo compiles without `viaIR` (`foundry.toml`), the
-///      same constraint documented in `Pool.swap`. Long `abi.encodePacked` chains
-///      that compile fine in isolation overrun the stack once inlined, so every
-///      chain here stays short by construction.
+///      Row pitch is `min(34, 176 / n)`, which fits all `MAX_BANDS` (8) above the fee
+///      block. Per-band bid/ask is not drawn: eight pairs of prices do not fit.
+///
+///      Colors are the Monet dark ramp from `apps/web/app/globals.css`. NFT viewers do
+///      not honour `prefers-color-scheme`, so the card commits to one ground.
+///
+///      `render` is `public` so this is a separately deployed, linked library: inlined,
+///      its builders would push `PositionDescriptor` past EIP-170. Every
+///      `abi.encodePacked` chain stays short, because this repo compiles without via-ir.
 library PositionSVG {
-    // --- Monet dark tokens (globals.css `.dark`) ---
-    string internal constant BG = "#09111D"; // --m-background
-    string internal constant SURFACE_2 = "#172437"; // --m-surface-2
-    string internal constant BORDER = "#23364A"; // --m-border
-    string internal constant PRIMARY = "#5F93D6"; // --m-primary
-    string internal constant MINT = "#4ADE9E"; // --m-logo
-    string internal constant GOLD = "#E0B85B"; // --m-accent
-    string internal constant ROSE = "#D06A6A"; // --m-error
-    string internal constant TEXT = "#EEF3F8"; // --m-text-primary
-    string internal constant TEXT_2 = "#9EB2C7"; // --m-text-secondary
-    string internal constant TEXT_3 = "#70839A"; // --m-text-secondary-2
+    string internal constant BG = "#09111D";
+    string internal constant SURFACE_2 = "#172437";
+    string internal constant BORDER = "#23364A";
+    string internal constant MINT = "#4ADE9E";
+    string internal constant GOLD = "#E0B85B";
+    string internal constant ROSE = "#D06A6A";
+    string internal constant TEXT = "#EEF3F8";
+    string internal constant TEXT_2 = "#9EB2C7";
+    string internal constant TEXT_3 = "#70839A";
 
     string internal constant SANS = "Inter,system-ui,-apple-system,Helvetica,Arial,sans-serif";
     string internal constant MONO = "ui-monospace,SFMono-Regular,Menlo,monospace";
 
-    // Range-bar geometry. The bar is a fixed window: the position's own range
-    // always occupies the middle 60% of the track, so the band never changes
-    // size and the eye reads the *marker* — where the market sits relative to
-    // the range — which is the only thing that actually moves.
-    uint256 internal constant BAR_X = 24;
-    uint256 internal constant BAR_W = 282;
+    uint256 internal constant X = 22;
+    uint256 internal constant W = 286;
+    uint256 internal constant ROW0_Y = 205;
+    uint256 internal constant ROWS_H = 176;
+    uint256 internal constant MAX_PITCH = 34;
+    uint256 internal constant BOX_MIN_Y = 312;
+    uint256 internal constant BPS = 10_000;
 
-    uint8 internal constant STATE_IN_RANGE = 0;
-    uint8 internal constant STATE_NEAR_EDGE = 1;
-    uint8 internal constant STATE_OUT_OF_RANGE = 2;
-    uint8 internal constant STATE_NO_ORACLE = 3;
-    uint8 internal constant STATE_CLOSED = 4;
+    uint8 internal constant STATE_MATURE = 0;
+    uint8 internal constant STATE_VESTING = 1;
+    uint8 internal constant STATE_BAND_CLOSED = 2;
+    uint8 internal constant STATE_NO_ANCHOR = 3;
+    uint8 internal constant STATE_EMPTY = 4;
+
+    struct Row {
+        uint8 band;
+        string terms; // "±0.020% · 1×"
+        string pct; // "33.33%"
+        uint256 bps; // share of the token's value, 0..10000
+    }
 
     struct Params {
-        string pair; // "WETH / USDC"
-        string baseSymbol;
-        string quoteSymbol;
-        // Symbols capped short for the stat labels. The 282px stat row holds two labels
-        // that grow toward each other from opposite anchors, so an uncapped symbol makes
-        // them collide in the middle. The title and the JSON keep the full symbol.
+        string tokenId;
+        string pair; // "BASE / QUOTE"
+        string poolLine; // "0xdc36…96bb · 3 BANDS"
+        string anchor; // "1.02 · TWAP 300s" or "--"
+        Row[] rows;
         string baseTag;
         string quoteTag;
-        string minPrice;
-        string maxPrice;
-        string marketPrice;
-        string baseAmount;
-        string quoteAmount;
-        string baseFees;
-        string quoteFees;
-        string slippage; // "0.5%"
-        string tokenId;
-        string poolShort; // "0x1234...cdef"
-        string priceSource; // "TWAP 600s" | "LAST MATCH" | "--"
+        string baseOwned;
+        string quoteOwned;
+        string feesTotal; // "≈ 1.23 USDC"
+        string claimable;
+        string vesting;
+        uint256 claimBps; // claimable share of the fee total, 0..10000
+        bool hasFees;
+        string vestedPct;
+        uint256 vestedBps;
         uint8 state;
-        uint256 markerBps; // 0..10000 across the drawn track
-        bool hasMarket; // false => oracle unavailable, marker suppressed
+        string since; // "2026-09-25"
     }
 
-    function render(Params memory p) internal pure returns (string memory) {
+    function render(Params memory p) public pure returns (string memory) {
         string memory head = string(
             abi.encodePacked(
-                '<svg xmlns="http://www.w3.org/2000/svg" width="330" height="520"',
-                ' viewBox="0 0 330 520" font-family="',
-                SANS,
-                '">',
-                _defs(stateColor(p.state)),
-                _ground()
-            )
-        );
-        string memory body = string(abi.encodePacked(_header(p), _range(p), _stats(p)));
-        return string(abi.encodePacked(head, body, _footer(p), "</svg>"));
-    }
-
-    // ------------------------------------------------------------------
-    // defs + ground
-    // ------------------------------------------------------------------
-    function _defs(string memory tone) private pure returns (string memory) {
-        return string(
-            abi.encodePacked("<defs>", _bandGradient(), _glow(tone), _fade(), _grid(), "</defs>")
-        );
-    }
-
-    function _bandGradient() private pure returns (string memory) {
-        return string(
-            abi.encodePacked(
-                '<linearGradient id="band" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="',
-                MINT,
-                '"/><stop offset="1" stop-color="',
-                PRIMARY,
-                '"/></linearGradient>'
-            )
-        );
-    }
-
-    function _glow(string memory tone) private pure returns (string memory) {
-        return string(
-            abi.encodePacked(
-                '<radialGradient id="glow" cx="0.16" cy="0.05" r="0.85"><stop offset="0" stop-color="',
-                tone,
-                '" stop-opacity="0.18"/><stop offset="1" stop-color="',
-                tone,
-                '" stop-opacity="0"/></radialGradient>'
-            )
-        );
-    }
-
-    function _fade() private pure returns (string memory) {
-        return string(
-            abi.encodePacked(
-                '<linearGradient id="fade" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="',
+                '<svg xmlns="http://www.w3.org/2000/svg" width="330" height="560" viewBox="0 0 330 560">',
+                '<rect x="0.5" y="0.5" width="329" height="559" rx="18" fill="',
                 BG,
-                '" stop-opacity="0"/><stop offset="1" stop-color="',
-                BG,
-                '"/></linearGradient>'
-            )
-        );
-    }
-
-    /// @dev A survey grid, drawn only across the top of the card and then faded
-    ///      out. The motif named the protocol before it was ITER; it is kept as
-    ///      artwork, not as a reference to the old name.
-    function _grid() private pure returns (string memory) {
-        return string(
-            abi.encodePacked(
-                '<pattern id="grid" width="22" height="22" patternUnits="userSpaceOnUse">',
-                '<path d="M22 0H0V22" fill="none" stroke="',
+                '" stroke="',
                 BORDER,
-                '" stroke-width="1"/></pattern>',
-                '<clipPath id="card"><rect width="330" height="520" rx="26"/></clipPath>'
+                '"/>',
+                _header(p)
             )
         );
-    }
-
-    function _ground() private pure returns (string memory) {
-        string memory inner = string(
-            abi.encodePacked(
-                '<g clip-path="url(#card)"><rect width="330" height="520" fill="',
-                BG,
-                '"/><rect width="330" height="300" fill="url(#grid)"/>',
-                '<rect width="330" height="300" fill="url(#fade)"/>',
-                '<rect width="330" height="520" fill="url(#glow)"/></g>'
-            )
-        );
+        uint256 boxY = _boxY(p.rows.length);
         return string(
-            abi.encodePacked(
-                inner,
-                '<rect x="0.5" y="0.5" width="329" height="519" rx="25.5" fill="none" stroke="',
-                BORDER,
-                '"/>'
-            )
+            abi.encodePacked(head, _distribution(p), _rows(p), _amounts(p, boxY), _fees(p, boxY + 64), _footer(p), "</svg>")
         );
     }
 
-    // ------------------------------------------------------------------
-    // header
-    // ------------------------------------------------------------------
+    // ------------------------------------------------------------------ layout
+
+    function pitch(uint256 n) internal pure returns (uint256) {
+        if (n == 0) return MAX_PITCH;
+        uint256 h = ROWS_H / n;
+        return h < MAX_PITCH ? h : MAX_PITCH;
+    }
+
+    function _boxY(uint256 n) private pure returns (uint256) {
+        if (n == 0) return BOX_MIN_Y;
+        uint256 y = ROW0_Y + (n - 1) * pitch(n) + 19;
+        return y > BOX_MIN_Y ? y : BOX_MIN_Y;
+    }
+
+    /// Band i's tint: the primary blue, darkening down the ladder.
+    function bandColor(uint8 i) internal pure returns (string memory) {
+        if (i == 0) return "#5F93D6";
+        if (i == 1) return "#4F80BE";
+        if (i == 2) return "#426FA7";
+        if (i == 3) return "#375F90";
+        if (i == 4) return "#2E517B";
+        if (i == 5) return "#274567";
+        if (i == 6) return "#213A56";
+        return "#1C3147";
+    }
+
+    // ------------------------------------------------------------------ blocks
+
     function _header(Params memory p) private pure returns (string memory) {
-        string memory eyebrow = string(
-            abi.encodePacked('fill="', TEXT_3, '" font-size="9" letter-spacing="2.4"')
-        );
-        string memory title = string(
+        string memory top = string(
             abi.encodePacked(
-                'fill="', TEXT, '" font-size="', _titleSize(bytes(p.pair).length), '" font-weight="600"'
+                _text(X, 34, TEXT_3, "10", false, "ITER LP"),
+                _text(X + W, 34, TEXT_3, "10", true, string(abi.encodePacked("#", p.tokenId))),
+                _title(p.pair),
+                _text(X, 90, TEXT_3, "10", false, p.poolLine)
             )
         );
         return string(
             abi.encodePacked(
-                _text(24, 42, eyebrow, "ITER LIQUIDITY"),
-                _text(24, 76, title, p.pair),
-                _pill(stateColor(p.state), stateLabel(p.state))
+                top,
+                _rect(X, 104, W, 30, 8, SURFACE_2),
+                _text(34, 123, TEXT_2, "10", false, "ANCHOR"),
+                _text(296, 123, TEXT, "10.5", true, p.anchor),
+                _text(X, 160, TEXT_3, "10", false, "DISTRIBUTION")
             )
         );
     }
 
-    /// @dev The title is anchored left with 282px of room. Measured against the rendered
-    ///      output, this face runs about 0.62em per character, so the widest string that
-    ///      fits is 282 / (0.62 * size). The tiers below hold that bound at every step;
-    ///      worst case is two 13-char address fallbacks (29 chars), which clears at 15px.
-    ///      A realistic pair ("WETH / USDC", 11 chars) stays at the full 23px.
-    function _titleSize(uint256 len) private pure returns (string memory) {
-        if (len <= 18) return "23";
-        if (len <= 22) return "19";
-        if (len <= 26) return "17";
-        return "15";
+    function _title(string memory pair) private pure returns (string memory) {
+        uint256 len = bytes(pair).length;
+        string memory size = len <= 16 ? "24" : len <= 21 ? "19" : "15";
+        return string(
+            abi.encodePacked(
+                '<text x="22" y="70" fill="', TEXT, '" font-size="', size, '" font-family="', SANS,
+                '" font-weight="700">', pair, "</text>"
+            )
+        );
     }
 
-    function _pill(string memory tone, string memory label) private pure returns (string memory) {
-        string memory shape = string(
+    /// The stacked bar: one segment per band, 2px gaps, clipped to a pill.
+    function _distribution(Params memory p) private pure returns (string memory out) {
+        out = string(
             abi.encodePacked(
-                '<rect x="24" y="94" width="120" height="24" rx="12" fill="',
-                tone,
-                '" fill-opacity="0.14" stroke="',
-                tone,
-                '" stroke-opacity="0.45"/><circle cx="40" cy="106" r="3.5" fill="',
-                tone,
-                '"/>'
+                '<clipPath id="d"><rect x="22" y="168" width="286" height="10" rx="5"/></clipPath>',
+                _rect(X, 168, W, 10, 5, SURFACE_2),
+                '<g clip-path="url(#d)">'
             )
         );
-        string memory attrs = string(
-            abi.encodePacked(
-                'fill="',
-                tone,
-                '" font-size="9.5" font-weight="600" letter-spacing="1.1" text-anchor="middle"'
-            )
-        );
-        return string(abi.encodePacked(shape, _text(91, 110, attrs, label)));
-    }
-
-    // ------------------------------------------------------------------
-    // price range
-    // ------------------------------------------------------------------
-    function _range(Params memory p) private pure returns (string memory) {
-        string memory labels = string(
-            abi.encodePacked(
-                _text(24, 158, _labelAttr(false), "MIN PRICE"),
-                _text(306, 158, _labelAttr(true), "MAX PRICE")
-            )
-        );
-        string memory values = string(
-            abi.encodePacked(
-                _text(24, 180, _valueAttr(TEXT, "15", false), p.minPrice),
-                _text(306, 180, _valueAttr(TEXT, "15", true), p.maxPrice)
-            )
-        );
-        return string(abi.encodePacked(labels, values, _bar(p)));
-    }
-
-    function _bar(Params memory p) private pure returns (string memory) {
-        string memory track = string(
-            abi.encodePacked(
-                '<rect x="24" y="214" width="282" height="10" rx="5" fill="',
-                SURFACE_2,
-                '"/><rect x="80" y="214" width="170" height="10" rx="5" fill="url(#band)"/>'
-            )
-        );
-        return string(abi.encodePacked(track, _marker(p)));
-    }
-
-    function _marker(Params memory p) private pure returns (string memory) {
-        if (!p.hasMarket) {
-            string memory muted = string(
-                abi.encodePacked('fill="', TEXT_3, '" font-size="10" text-anchor="middle"')
-            );
-            return _text(165, 250, muted, "market price unavailable");
+        uint256 n = p.rows.length;
+        uint256 gaps = n > 1 ? (n - 1) * 2 : 0;
+        uint256 x = X;
+        for (uint256 i = 0; i < n; i++) {
+            uint256 w = ((W - gaps) * p.rows[i].bps) / BPS;
+            // The last segment takes whatever flooring left over, so the bar fills its
+            // track instead of stopping a few pixels short.
+            if (i == n - 1 && X + W > x) w = X + W - x;
+            if (w > 0) out = string(abi.encodePacked(out, _rect(x, 168, w, 10, 0, bandColor(p.rows[i].band))));
+            x += w + 2;
         }
-        uint256 x = BAR_X + (BAR_W * p.markerBps) / 10_000;
-        string memory tone = stateColor(p.state);
-        string memory needle = string(
-            abi.encodePacked(
-                '<g transform="translate(',
-                Strings.toString(x),
-                ',0)"><path d="M-5 200L5 200L0 208Z" fill="',
-                tone,
-                '"/><rect x="-1" y="206" width="2" height="26" rx="1" fill="',
-                tone,
-                '"/></g>'
-            )
-        );
-        string memory caption = string(
-            abi.encodePacked(
-                'fill="', TEXT_2, '" font-size="10.5" font-family="', MONO, '" text-anchor="middle"'
-            )
-        );
-        // Keep the caption inside the card even when the marker is pinned to an edge.
-        uint256 labelX = x < 62 ? 62 : (x > 268 ? 268 : x);
-        return string(abi.encodePacked(needle, _text(labelX, 250, caption, p.marketPrice)));
+        out = string(abi.encodePacked(out, "</g>"));
     }
 
-    // ------------------------------------------------------------------
-    // stats + footer
-    // ------------------------------------------------------------------
-    function _stats(Params memory p) private pure returns (string memory) {
-        string memory rule =
-            string(abi.encodePacked('<path d="M24 276H306" stroke="', BORDER, '"/>'));
-        string memory deposits = string(
-            abi.encodePacked(
-                _cell(306, false, string(abi.encodePacked(p.baseTag, " DEPOSITED")), p.baseAmount),
-                _cell(306, true, string(abi.encodePacked(p.quoteTag, " DEPOSITED")), p.quoteAmount)
-            )
-        );
-        string memory fees = string(
-            abi.encodePacked(
-                _cell(360, false, string(abi.encodePacked(p.baseTag, " FEES OWED")), p.baseFees),
-                _cell(360, true, string(abi.encodePacked(p.quoteTag, " FEES OWED")), p.quoteFees)
-            )
-        );
-        string memory band = string(
-            abi.encodePacked(
-                _cell(414, false, "SLIPPAGE LIMIT", p.slippage),
-                _cell(414, true, "PRICE SOURCE", p.priceSource)
-            )
-        );
-        return string(abi.encodePacked(rule, deposits, fees, band));
+    function _rows(Params memory p) private pure returns (string memory out) {
+        uint256 h = pitch(p.rows.length);
+        for (uint256 i = 0; i < p.rows.length; i++) {
+            out = string(abi.encodePacked(out, _row(p.rows[i], ROW0_Y + i * h)));
+        }
     }
 
-    function _cell(uint256 y, bool right, string memory label, string memory value)
+    function _row(Row memory r, uint256 y) private pure returns (string memory) {
+        string memory label = string(abi.encodePacked("B", Strings.toString(r.band)));
+        string memory texts = string(
+            abi.encodePacked(
+                _text(X, y, TEXT, "10", false, label),
+                _text(48, y, TEXT_2, "10", false, r.terms),
+                _text(X + W, y, TEXT, "10", true, r.pct)
+            )
+        );
+        return string(
+            abi.encodePacked(
+                texts, _rect(X, y + 5, W, 4, 2, SURFACE_2), _rect(X, y + 5, (W * r.bps) / BPS, 4, 2, bandColor(r.band))
+            )
+        );
+    }
+
+    function _amounts(Params memory p, uint256 y) private pure returns (string memory) {
+        return string(
+            abi.encodePacked(
+                _cell(X, y, p.baseTag, p.baseOwned), _cell(169, y, p.quoteTag, p.quoteOwned)
+            )
+        );
+    }
+
+    function _cell(uint256 x, uint256 y, string memory label, string memory value)
         private
         pure
         returns (string memory)
     {
-        uint256 x = right ? 306 : 24;
         return string(
             abi.encodePacked(
-                _text(x, y, _labelAttr(right), label),
-                _text(x, y + 21, _valueAttr(TEXT, "13.5", right), value)
+                _rect(x, y, 139, 44, 10, SURFACE_2),
+                _text(x + 12, y + 17, TEXT_3, "9.5", false, label),
+                _text(x + 12, y + 35, TEXT, "13", false, value)
+            )
+        );
+    }
+
+    /// Fee stack (claimable in mint over vesting in gold), then the vesting ramp.
+    function _fees(Params memory p, uint256 y) private pure returns (string memory) {
+        string memory stack;
+        uint256 vestY;
+        if (p.hasFees) {
+            stack = string(
+                abi.encodePacked(
+                    _text(X, y, TEXT_3, "10", false, "FEES"),
+                    _text(X + W, y, TEXT, "10", true, p.feesTotal),
+                    _rect(X, y + 8, W, 6, 3, GOLD),
+                    _rect(X, y + 8, (W * p.claimBps) / BPS, 6, 3, MINT),
+                    _text(X, y + 30, MINT, "9.5", false, string(abi.encodePacked("CLAIMABLE ", p.claimable))),
+                    _text(X + W, y + 30, GOLD, "9.5", true, string(abi.encodePacked("VESTING ", p.vesting)))
+                )
+            );
+            vestY = y + 54;
+        } else {
+            stack = string(
+                abi.encodePacked(
+                    _text(X, y, TEXT_3, "10", false, "FEES"),
+                    _text(X + W, y, TEXT_3, "10", true, "nothing accrued yet"),
+                    _rect(X, y + 8, W, 6, 3, SURFACE_2)
+                )
+            );
+            vestY = y + 38;
+        }
+        string memory tone = p.vestedBps >= BPS ? MINT : GOLD;
+        return string(
+            abi.encodePacked(
+                stack,
+                _text(X, vestY, TEXT_3, "10", false, "VESTED"),
+                _text(X + W, vestY, tone, "10", true, p.vestedPct),
+                _rect(X, vestY + 8, W, 6, 3, SURFACE_2),
+                _rect(X, vestY + 8, (W * p.vestedBps) / BPS, 6, 3, tone)
             )
         );
     }
 
     function _footer(Params memory p) private pure returns (string memory) {
-        string memory rule =
-            string(abi.encodePacked('<path d="M24 462H306" stroke="', BORDER, '"/>'));
-        string memory id =
-            _text(24, 488, _valueAttr(TEXT_2, "10.5", false), string(abi.encodePacked("POSITION #", p.tokenId)));
-        return string(
-            abi.encodePacked(rule, id, _text(306, 488, _valueAttr(TEXT_3, "10.5", true), p.poolShort))
-        );
-    }
-
-    // ------------------------------------------------------------------
-    // primitives
-    // ------------------------------------------------------------------
-    function _text(uint256 x, uint256 y, string memory attrs, string memory content)
-        private
-        pure
-        returns (string memory)
-    {
+        string memory label = stateLabel(p.state);
+        string memory tone = stateColor(p.state);
+        // Mono at 9.5px is ~5.8px per glyph; 22px of padding either side of the label.
+        uint256 w = bytes(label).length * 6 + 22;
         return string(
             abi.encodePacked(
-                '<text x="',
-                Strings.toString(x),
-                '" y="',
-                Strings.toString(y),
-                '" ',
-                attrs,
-                ">",
-                content,
-                "</text>"
+                '<rect x="22" y="520" width="', Strings.toString(w), '" height="18" rx="9" fill="', tone,
+                '" fill-opacity="0.14"/>',
+                _textMid(X + w / 2, tone, label),
+                _text(X + W, 532, TEXT_3, "9.5", true, string(abi.encodePacked("SINCE ", p.since)))
             )
         );
     }
 
-    function _labelAttr(bool right) private pure returns (string memory) {
-        return string(
-            abi.encodePacked(
-                'fill="',
-                TEXT_3,
-                '" font-size="8.5" letter-spacing="1.6"',
-                right ? ' text-anchor="end"' : ""
-            )
-        );
-    }
+    // ------------------------------------------------------------------ builders
 
-    function _valueAttr(string memory fill, string memory size, bool right)
+    function _rect(uint256 x, uint256 y, uint256 w, uint256 h, uint256 rx, string memory fill)
         private
         pure
         returns (string memory)
     {
+        string memory pos = string(
+            abi.encodePacked('<rect x="', Strings.toString(x), '" y="', Strings.toString(y), '" width="', Strings.toString(w))
+        );
         return string(
             abi.encodePacked(
-                'fill="',
-                fill,
-                '" font-size="',
-                size,
-                '" font-family="',
-                MONO,
-                right ? '" text-anchor="end"' : '"'
+                pos, '" height="', Strings.toString(h), '" rx="', Strings.toString(rx), '" fill="', fill, '"/>'
+            )
+        );
+    }
+
+    function _text(uint256 x, uint256 y, string memory fill, string memory size, bool right, string memory content)
+        private
+        pure
+        returns (string memory)
+    {
+        string memory attrs = string(
+            abi.encodePacked(
+                '<text x="', Strings.toString(x), '" y="', Strings.toString(y), '" fill="', fill, '" font-size="', size
+            )
+        );
+        return string(
+            abi.encodePacked(
+                attrs, '" font-family="', MONO, right ? '" text-anchor="end">' : '">', content, "</text>"
+            )
+        );
+    }
+
+    function _textMid(uint256 x, string memory fill, string memory content) private pure returns (string memory) {
+        return string(
+            abi.encodePacked(
+                '<text x="', Strings.toString(x), '" y="532" fill="', fill, '" font-size="9.5" font-family="', MONO,
+                '" text-anchor="middle">', content, "</text>"
             )
         );
     }
 
     function stateColor(uint8 s) internal pure returns (string memory) {
-        if (s == STATE_IN_RANGE) return MINT;
-        if (s == STATE_NEAR_EDGE) return GOLD;
-        if (s == STATE_OUT_OF_RANGE) return ROSE;
-        return TEXT_3; // NO ORACLE / CLOSED
+        if (s == STATE_MATURE) return MINT;
+        if (s == STATE_VESTING) return GOLD;
+        if (s == STATE_BAND_CLOSED) return ROSE;
+        return TEXT_3;
     }
 
-    function stateLabel(uint8 s) internal pure returns (string memory) {
-        if (s == STATE_IN_RANGE) return "IN RANGE";
-        if (s == STATE_NEAR_EDGE) return "NEAR EDGE";
-        if (s == STATE_OUT_OF_RANGE) return "OUT OF RANGE";
-        if (s == STATE_NO_ORACLE) return "NO ORACLE";
-        return "CLOSED";
+    function stateLabel(uint8 s) public pure returns (string memory) {
+        if (s == STATE_MATURE) return "ACTIVE";
+        if (s == STATE_VESTING) return "VESTING";
+        if (s == STATE_BAND_CLOSED) return "BAND CLOSED";
+        if (s == STATE_NO_ANCHOR) return "NO ANCHOR";
+        return "EMPTY";
     }
 }

@@ -4,14 +4,16 @@ pragma solidity ^0.8.24;
 import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
 import {MatchingEngine} from "../../src/exchange/MatchingEngine.sol";
-import {PoolFactory} from "../../src/swap/PoolFactory.sol";
-import {PositionManager} from "../../src/swap/PositionManager.sol";
-import {SwapRouter} from "../../src/swap/SwapRouter.sol";
+import {BandPoolFactory} from "../../src/swap/BandPoolFactory.sol";
+import {BandPositionManager} from "../../src/swap/BandPositionManager.sol";
+import {BandPool} from "../../src/swap/BandPool.sol";
+import {PositionDescriptor} from "../../src/swap/PositionDescriptor.sol";
+import {BandSwapRouter} from "../../src/swap/BandSwapRouter.sol";
 
 /// Deploys the swap system and performs the wiring the exchange scripts never did.
 ///
 /// The existing per-chain scripts under script/exchange stop at MatchingEngine +
-/// OrderbookFactory. Nothing anywhere deploys PoolFactory / PositionManager / SwapRouter,
+/// OrderbookFactory. Nothing anywhere deploys BandPoolFactory / BandPositionManager / BandSwapRouter,
 /// and nothing calls the three admin setters that bind them together. Two of those setters
 /// are not optional:
 ///
@@ -21,9 +23,9 @@ import {SwapRouter} from "../../src/swap/SwapRouter.sol";
 ///                                       reverts NotRouter. A deployment that skips this
 ///                                       looks healthy and cannot trade.
 ///
-/// Ordering is not free-form. PoolFactory.initialize deploys the Pool implementation that
-/// every pair's pool is cloned from, so it must run before any pair is listed; and
-/// PositionManager must know the factory and router before it can mint against a pool.
+/// Ordering is not free-form. The factory must be initialized with the BandPool implementation
+/// every pair's pool is cloned from before any pair is listed; and
+/// BandPositionManager must know the factory and router before it can mint against a pool.
 /// This mirrors the order test/swap/PoolBaseSetup.sol and Router.t.sol establish.
 contract DeploySwapSystem is Script {
     // Set to the MatchingEngine already deployed on the target chain.
@@ -39,35 +41,42 @@ contract DeploySwapSystem is Script {
 
     function run() external {
 
-        uint256 deployerKey = vm.envUint("RISE_TESTNET_DEPLOYER_KEY");
+        uint256 deployerKey = vm.envUint("DEPLOYER_KEY");
         vm.startBroadcast(deployerKey);
 
         MatchingEngine engine = MatchingEngine(payable(matchingEngineAddress()));
 
-        // 1. Factory first -- initialize() deploys the Pool implementation clones point at.
-        PoolFactory poolFactory = new PoolFactory();
-        poolFactory.initialize(address(engine));
-
-        // 2. Router binds to the factory at construction and never changes.
-        SwapRouter router = new SwapRouter(address(poolFactory));
-
-        // 3. Position manager, then the mutual introductions.
-        PositionManager positionManager = new PositionManager();
+        // 1. Manager and router first: the factory takes the manager at initialize, so a
+        //    band pool is never created without one.
+        BandPositionManager positionManager = new BandPositionManager();
         positionManager.initialize(POSITION_URI);
+        BandSwapRouter router = new BandSwapRouter();
+
+        // 2. The BandPool implementation clones point at, then the factory, which names the
+        //    default maturity and band fractions a new pair is born with.
+        BandPool poolImpl = new BandPool();
+        BandPoolFactory poolFactory = new BandPoolFactory();
+        poolFactory.initialize(address(engine), address(positionManager), address(poolImpl), vm.addr(deployerKey));
         positionManager.setPoolFactory(address(poolFactory));
-        positionManager.setRouter(address(router));
-        poolFactory.setPositionManager(address(positionManager));
 
         // 4. The engine-side wiring. Both are required; the second is what makes swaps
         //    executable at all.
         engine.setPoolFactory(address(poolFactory));
         engine.setSwapRouter(address(router));
 
+        // 5. The on-chain metadata renderer. Stateless and swappable by design, so it is
+        //    deployed last and can be replaced later without touching the token that
+        //    holds people's positions. Left unset the manager serves POSITION_URI, which
+        //    points at nothing.
+        PositionDescriptor descriptor = new PositionDescriptor();
+        positionManager.setDescriptor(address(descriptor));
+
         vm.stopBroadcast();
 
         console.log("POOL_FACTORY_ADDRESS=%s", address(poolFactory));
         console.log("POSITION_MANAGER_ADDRESS=%s", address(positionManager));
         console.log("SWAP_ROUTER_ADDRESS=%s", address(router));
+        console.log("POSITION_DESCRIPTOR_ADDRESS=%s", address(descriptor));
         console.log("POOL_IMPL=%s", poolFactory.impl());
     }
 }
@@ -89,8 +98,8 @@ contract VerifySwapWiring is Script {
 
     function run() external view {
         MatchingEngine engine = MatchingEngine(payable(matchingEngineAddress()));
-        PoolFactory factory = PoolFactory(POOL_FACTORY);
-        PositionManager pm = PositionManager(POSITION_MANAGER);
+        BandPoolFactory factory = BandPoolFactory(POOL_FACTORY);
+        BandPositionManager pm = BandPositionManager(POSITION_MANAGER);
 
         address wiredFactory = engine.poolFactory();
         address wiredRouter = engine.swapRouter();
@@ -100,16 +109,24 @@ contract VerifySwapWiring is Script {
         console.log("factory.impl            = %s", factory.impl());
         console.log("factory.positionManager = %s", factory.positionManager());
         console.log("pm.poolFactory          = %s", address(pm.poolFactory()));
-        console.log("pm.router               = %s", pm.router());
+        console.log("pm.descriptor           = %s", pm.descriptor());
 
         require(wiredFactory == POOL_FACTORY, "engine.poolFactory not wired");
         require(wiredRouter == SWAP_ROUTER, "engine.swapRouter not wired -- ALL SWAPS WOULD REVERT");
         require(factory.impl() != address(0), "pool implementation missing");
         require(factory.positionManager() == POSITION_MANAGER, "factory.positionManager not wired");
+        // No pm.router check: the manager reads the engine's router, which is the same
+        // slot the pool's onlyRouter gate reads, and is asserted above.
         require(address(pm.poolFactory()) == POOL_FACTORY, "pm.poolFactory not wired");
-        require(pm.router() == SWAP_ROUTER, "pm.router not wired");
+
+        // Deliberately logged, not required: with no descriptor the token still works
+        // and serves POSITION_URI. It is a cosmetic gap, not a broken deployment, and a
+        // hard require here would block a preflight over artwork.
+        if (pm.descriptor() == address(0)) {
+            console.log("WARNING: pm.descriptor unset -- tokens render the static base URI");
+        }
 
         console.log("");
-        console.log("all six links wired correctly");
+        console.log("all five links wired correctly");
     }
 }
